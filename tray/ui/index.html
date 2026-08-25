@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Airo</title>
+<style>
+  /* The same instrument as the dashboard, at the size of a popup.
+
+     It shares the type rule -- measured things mono, sentences sans -- and
+     the accent, so the tray and the page read as one tool rather than two
+     that happen to show the same number.
+
+     It does NOT share the dashboard's dark-only stance. This window is
+     docked into somebody else's desktop chrome and opens over whatever is
+     behind it, so it follows the system scheme; the dashboard is a page you
+     go to, and is the instrument's own face. Both schemes are tuned here,
+     not inherited by accident. */
+  :root {
+    --bg: #ffffff; --fg: #14181d; --faint: #67717d; --line: #e2e6ea;
+    --panel: #f4f6f8; --edge: #cdd4db; --accent: #17818d; --accent2: #dcf1f3;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo,
+            "DejaVu Sans Mono", Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu,
+            "Helvetica Neue", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0c0f12; --fg: #e3e9ef; --faint: #93a2b0; --line: #222a31;
+            --panel: #12161b; --edge: #2f3a44; --accent: #57ccd8;
+            --accent2: #173f46; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    /* The window opens at 480px but is resizable. Unbounded, the columns
+       drift to opposite edges on a wide window and stop reading as a table
+       at all -- the alignment is the whole point of this panel. */
+    margin: 0 auto; padding: 0 16px 16px; max-width: 560px;
+    font: 12.5px/1.55 var(--sans);
+    background: var(--bg); color: var(--fg);
+  }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* The status line, in miniature: what this is and where it is reading. */
+  .bar {
+    display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap;
+    margin: 0 -16px 14px; padding: 9px 16px;
+    border-bottom: 1px solid var(--edge); background: var(--panel);
+    font-family: var(--mono);
+  }
+  h1 { font: 600 12.5px/1 var(--mono); margin: 0; letter-spacing: .02em; }
+  h1::before { content: "▮"; color: var(--accent); margin-right: 6px; }
+  .loc { color: var(--faint); font-size: 11px; margin: 0; }
+
+  .headline { display: flex; align-items: baseline; gap: 14px; }
+  /* Mono and tabular for the same reason as the dashboard: a number that is
+     re-read every thirty seconds must not shift on its stems when it does. */
+  .aqi { font: 600 48px/1 var(--mono); letter-spacing: -.035em;
+         font-variant-numeric: tabular-nums; transition: color .3s ease; }
+  .band { font: 700 11px/1.4 var(--mono); text-transform: uppercase;
+          letter-spacing: .1em; transition: color .3s ease; }
+  .ugm { color: var(--faint); font: 11.5px/1.5 var(--mono);
+         font-variant-numeric: tabular-nums; margin-top: 2px; }
+
+  /* Provenance as output: how this number was arrived at, in the gutter
+     style the dashboard uses for the same job. */
+  .prov {
+    margin: 12px 0 16px; padding-left: 10px;
+    border-left: 1px solid var(--line);
+    color: var(--faint); font: 11px/1.65 var(--mono);
+  }
+  .warn { color: #e8a33d; }
+  .alert {
+    margin-top: 8px; padding: 7px 9px; border-radius: 2px;
+    background: rgba(226,112,58,.13); border-left: 3px solid #e2703a;
+    color: var(--fg); font: 11.5px/1.5 var(--sans);
+  }
+
+  h2 {
+    font: 600 9.5px/1 var(--mono); text-transform: uppercase;
+    letter-spacing: .12em; color: var(--faint); margin: 18px 0 8px;
+    display: flex; align-items: center; gap: 7px;
+  }
+  h2::before { content: ""; width: 3px; height: 9px; background: var(--accent);
+               flex: none; opacity: .85; }
+  /* A shade tighter than it was. The measured columns are monospaced now,
+     which is wider per character than the proportional face they replaced,
+     and this window opens at 480px. Column widths are left to the browser:
+     pinning them made "1.1 km" wrap onto two lines in a cell with room to
+     spare, which is worse than the crowding it was meant to relieve. */
+  table { width: 100%; border-collapse: collapse; font-family: var(--mono); }
+  th, td {
+    text-align: left; padding: 6px 3px;
+    border-bottom: 1px solid var(--line); font-size: 11px;
+  }
+  th { color: var(--faint); font-weight: 600; font-size: 9px;
+       text-transform: uppercase; letter-spacing: .1em; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.stale td { opacity: .5; }
+  .dot {
+    display: inline-block; width: 8px; height: 8px;
+    border-radius: 50%; margin-right: 7px; vertical-align: middle;
+  }
+  .tag {
+    font: 600 9px/1.6 var(--mono); text-transform: uppercase;
+    letter-spacing: .08em; padding: 1px 5px; border-radius: 2px;
+    background: var(--line); color: var(--faint); margin-left: 5px;
+  }
+  button {
+    font: 11.5px/1.4 var(--mono); padding: 6px 12px; border-radius: 2px;
+    border: 1px solid var(--line); background: var(--panel);
+    color: var(--fg); cursor: pointer;
+    transition: border-color .15s, color .15s;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  /* A legal surface, in the reading face -- not shrunk to small print. */
+  footer {
+    margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--line);
+    color: var(--faint); font: 11px/1.6 var(--sans);
+  }
+  footer p { margin: 3px 0; }
+  .empty { color: var(--faint); font-size: 11.5px; margin: 4px 0 12px; }
+
+  /* The rolling-average table is the one thing the tray menu genuinely
+     cannot render well: a native NSMenuItem has no font control, so
+     space-padded columns come out ragged in a proportional face. Here we
+     have both a monospaced font and colour, which is what made the old
+     SwiftBar readout legible at a glance. */
+  .avg { width: auto; border-collapse: collapse; margin: 2px 0 4px; }
+  .avg td {
+    font: 12px/1.8 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    padding: 0; white-space: nowrap; border-bottom: 0;
+  }
+  .avg td.k { color: var(--faint); padding-right: 18px;
+              text-transform: uppercase; letter-spacing: .08em; font-size: 10px; }
+  .avg td.v { text-align: right; padding-right: 14px; font-weight: 600;
+              font-variant-numeric: tabular-nums; }
+  .avg td.u { color: var(--faint); font-variant-numeric: tabular-nums; }
+  /* The current window, so the eye lands on it first. */
+  .avg tr.head td { background: var(--panel); }
+  .avg tr.head td.k { border-radius: 2px 0 0 2px; padding-left: 6px; }
+  .avg tr.head td.u { border-radius: 0 2px 2px 0; padding-right: 6px; }
+
+  .trend { margin: 12px 0 0; font: 600 12px/1.5 var(--mono); }
+  /* The served hint. A sentence for a person, so it is set as one. */
+  .hint {
+    margin: 8px 0 16px; padding: 8px 10px; border-radius: 2px;
+    font: 12px/1.55 var(--sans); background: var(--panel);
+    border-left: 3px solid var(--line);
+  }
+  .hint.medium { border-left-color: #e8a33d; }
+  .hint.high { border-left-color: #e2703a; }
+  .polled { color: var(--faint); font: 10.5px/1.5 var(--mono); margin: 10px 0 0; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition-duration: .01ms !important;
+      animation-duration: .01ms !important; }
+  }
+</style>
+</head>
+<body>
+<header class="bar">
+  <h1 id="title">Airo</h1>
+  <span class="loc" id="loc"></span>
+</header>
+
+<div class="headline">
+  <div class="aqi" id="aqi">—</div>
+  <div>
+    <div class="band" id="band"></div>
+    <div class="ugm" id="ugm"></div>
+  </div>
+</div>
+
+<div class="prov" id="prov"></div>
+
+<div id="avgSection">
+<h2>Rolling averages</h2>
+<table class="avg"><tbody id="averages"></tbody></table>
+</div>
+<div class="trend" id="trend"></div>
+<div class="hint" id="hint"></div>
+
+<h2>Sources</h2>
+<div id="noSources" class="empty">No source has reported yet.</div>
+<table id="srcTable">
+  <thead>
+    <tr><th>Source</th><th class="num">PM2.5</th><th class="num">Distance</th><th class="num">Age</th></tr>
+  </thead>
+  <tbody id="sources"></tbody>
+</table>
+
+<p style="margin-top:16px"><button id="poll">Poll now</button></p>
+
+<footer id="footer"></footer>
+
+<script type="module">
+const { invoke } = window.__TAURI__.core;
+const { listen } = window.__TAURI__.event;
+
+// Band colours mirror what the poller decided. The window never re-derives a
+// band from a number -- the poller owns which scale is configured, and
+// ARCHITECTURE §3 requires the colour to match the displayed rounded value.
+const COLOURS = {
+  "Very good": "#4cae4c", "Good": "#4cae4c", "At or below WHO guideline": "#4cae4c",
+  "Fair": "#e8a33d", "Moderate": "#e8a33d", "Above WHO guideline": "#e8a33d",
+  "Poor": "#e2703a", "Unhealthy for sensitive groups": "#e2703a",
+  "Very poor": "#d9534f", "Unhealthy": "#d9534f", "High": "#d9534f",
+  "Hazardous": "#8b1a1a", "Very unhealthy": "#8b1a1a", "Extreme": "#8b1a1a",
+};
+const colour = b => COLOURS[b] || "#888888";
+const el = id => document.getElementById(id);
+
+function render(d) {
+  el("loc").textContent = d.location_name || "";
+  el("title").textContent = d.scale_label ? `Airo — ${d.scale_label}` : "Airo";
+
+  const hasValue = d.aqi !== null && d.aqi !== undefined;
+  el("aqi").textContent = hasValue
+    ? (d.scale === "raw" ? d.aqi.toFixed(1) : Math.round(d.aqi))
+    : "—";
+  el("aqi").style.color = colour(d.band);
+  el("band").textContent = d.band || "No data";
+  el("band").style.color = colour(d.band);
+  el("ugm").textContent = (d.pm25_10min !== null && d.pm25_10min !== undefined)
+    ? `${d.pm25_10min.toFixed(1)} µg/m³` : "";
+
+  const bits = [];
+  if (d.provenance) bits.push(d.provenance);
+  if (d.fusion_rule) bits.push(`rule: ${d.fusion_rule}`);
+  if (d.fusion_note) bits.push(d.fusion_note);
+  el("prov").style.display =
+    (bits.length || d.uncorroborated || d.fusion_degraded) ? "" : "none";
+  el("prov").innerHTML = bits.join(" · ")
+    + (d.fusion_degraded ? ' <span class="warn">⚠ some sources stale</span>' : "")
+    + (d.uncorroborated
+        ? '<div class="alert"><b>⚠ Not confirmed by nearby sources.</b> '
+          + (d.corroboration_note || "") + '</div>'
+        : "");
+
+  // Rolling averages. Both the index and the raw concentration it came from,
+  // because the index is scale-dependent and the µg figure is not.
+  const WINDOWS = [["now","Now"],["10min","10 min"],["30min","30 min"],
+                   ["60min","1 hr"],["6hr","6 hr"],["24hr","1 day"],
+                   ["1week","Week"]];
+  const aqiA = d.averages_aqi || {}, ugA = d.averages_pm25 || {};
+  const rows = WINDOWS.filter(([k]) => aqiA[k] !== null && aqiA[k] !== undefined);
+  el("averages").innerHTML = rows.map(([k, label]) => {
+    const v = aqiA[k], ug = ugA[k];
+    const shown = d.scale === "raw" ? v.toFixed(1) : Math.round(v);
+    // Colour the value by the band it sits in, using the rounded figure that
+    // is actually displayed -- ARCHITECTURE §3, the same rule the dashboard
+    // follows. Bands come from the poller; nothing is re-derived here.
+    const band = (d.averages_band || {})[k];
+    const isNow = k === "10min" || (rows.length && k === rows[0][0] && !("10min" in aqiA));
+    return `<tr class="${isNow ? "head" : ""}">
+      <td class="k">${label}</td>
+      <td class="v" ${band ? `style="color:${colour(band)}"` : ""}>${shown}</td>
+      <td class="u">${ug == null ? "" : `(${ug.toFixed(1)} µg)`}</td>
+    </tr>`;
+  }).join("");
+
+  el("avgSection").style.display = rows.length ? "" : "none";
+
+  const t = d.trend || {};
+  const ARROW = { rising_fast: "▲", rising: "▲", clearing: "▼" };
+  el("trend").textContent = t.text ? `${ARROW[t.direction] || "→"} ${t.text}` : "";
+  el("trend").style.color = t.direction === "rising_fast" || t.direction === "rising"
+    ? "#e2703a" : (t.direction === "clearing" ? "#4cae4c" : "var(--faint)");
+
+  const h = d.time_hint || {};
+  el("hint").textContent = h.text || "";
+  el("hint").className = "hint " + (h.severity || "");
+  el("hint").style.display = h.text ? "" : "none";
+
+  const srcs = d.sources || [];
+  el("srcTable").style.display = srcs.length ? "" : "none";
+  el("noSources").style.display = srcs.length ? "none" : "";
+  el("sources").innerHTML = srcs.map(s => `
+    <tr class="${s.stale ? "stale" : ""}">
+      <td><span class="dot" style="background:${colour(s.band)}"></span>${
+        s.site_name || s.provider || "unknown"
+      }${s.quality === "suspect" ? '<span class="tag">sensor fault</span>' : ""
+      }${s.corroboration === "uncorroborated" ? '<span class="tag">unconfirmed</span>' : ""
+      }${s.stale ? '<span class="tag">stale</span>' : ""}</td>
+      <td class="num">${s.pm25 == null ? "—" : s.pm25.toFixed(1)}</td>
+      <td class="num">${s.distance_km == null ? "—" : s.distance_km.toFixed(1) + " km"}</td>
+      <td class="num">${s.age_minutes == null ? "—" : Math.round(s.age_minutes) + " min"}</td>
+    </tr>`).join("");
+
+  // Attribution is contractually required for some sources, not decoration.
+  el("footer").innerHTML =
+    (d.attributions || []).map(a => `<p>${a}</p>`).join("")
+    + "<p>Not medical advice. Consumer sensors can over-read in humidity.</p>"
+    + (d.last_poll_text
+        ? `<p>Polled ${d.last_poll_text}${d.next_poll_text ? " · next " + d.next_poll_text : ""}</p>`
+        : (d.fetched_local ? `<p>Updated ${d.fetched_local}</p>` : ""));
+}
+
+async function refresh() {
+  try { render(await invoke("get_latest")); }
+  catch (e) { el("prov").textContent = String(e); }
+}
+
+el("poll").addEventListener("click", async () => {
+  el("poll").textContent = "Polling…";
+  try { await invoke("poll_now"); } catch (e) { console.error(e); }
+  setTimeout(async () => { await refresh(); el("poll").textContent = "Poll now"; }, 3000);
+});
+
+listen("airo://latest", e => render(e.payload));
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>

@@ -1,0 +1,82 @@
+[
+ {
+  "name": "the locality scan stops normalising two-word places",
+  "file": "tests/test_contracts.py",
+  "find": "    pairs = [f\"{a} {b}\" for a, b in zip(words, words[1:])]\n    return words + pairs",
+  "replace": "    return words",
+  "target": "tests.test_contracts",
+  "edits_a_guard": true
+ },
+ {
+  "name": "the slug pattern stops recognising a place-lookup url",
+  "file": "tests/test_contracts.py",
+  "find": "    r\"[a-z0-9]+(?:-[a-z0-9]+){1,6}\"\n    r\"-(?:au|australia|qld|nsw|vic|tas|sa|wa|nt|act)-\\d{2,}\"\n",
+  "replace": "    r\"nothing-matches-this-shape-\\d{9,}\"\n",
+  "target": "tests.test_contracts",
+  "edits_a_guard": true
+ },
+ {
+  "name": "the keyword coordinate pattern stops seeing longitude",
+  "file": "tests/test_contracts.py",
+  "find": "KEYWORD_LON = re.compile(r\"\\blon(?:gitude)?[\\\"']?\\s*[:=]\\s*(-?\\d+\\.\\d{2,})\", re.I)",
+  "replace": "KEYWORD_LON = re.compile(r\"\\blon[\\\"']?\\s*[:=]\\s*(-?\\d+\\.\\d{2,})\", re.I)",
+  "target": "tests.test_contracts",
+  "edits_a_guard": true
+ },
+ {
+  "name": "the site index scan narrows back to quoted numbers",
+  "file": "tests/test_contracts.py",
+  "find": "SENSOR_INDEX = re.compile(r\"(?<![\\w.-])(\\d{5,7})(?![\\w.-])\")",
+  "replace": "SENSOR_INDEX = re.compile(r\"[\\\"'](\\d{6,7})[\\\"']\")",
+  "target": "tests.test_contracts",
+  "edits_a_guard": true
+ },
+ {
+  "name": "one marker exempts a whole file again",
+  "file": "tests/test_contracts.py",
+  "find": "    return ID_MARKER in lines[i] or (i > 0 and ID_MARKER in lines[i - 1])",
+  "replace": "    return any(ID_MARKER in line for line in lines)",
+  "target": "tests.test_contracts",
+  "edits_a_guard": true
+ },
+ {
+  "name": "the site name vocabulary stops reading the tray",
+  "file": "tests/test_contracts.py",
+  "find": "        return sorted((ROOT / \"tests\").glob(\"*.py\")) + \\\n            sorted((ROOT / \"tray\" / \"src\").glob(\"*.rs\"))",
+  "replace": "        return sorted((ROOT / \"tests\").glob(\"*.py\"))",
+  "target": "tests.test_contracts",
+  "edits_a_guard": true
+ },
+ {
+  "name": "any account name passes the home path scan",
+  "file": "tests/test_contracts.py",
+  "find": "            if m.group(1).lower() in SYNTHETIC_USERS:\n                continue",
+  "replace": "            if m.group(1) is not None:\n                continue",
+  "target": "tests.test_contracts",
+  "edits_a_guard": true
+ },
+ {
+  "name": "a refused git listing reads as a clean tree again",
+  "file": "tests/test_contracts.py",
+  "find": "    if proc.returncode != 0:\n        raise RuntimeError(",
+  "replace": "    if False:\n        raise RuntimeError(",
+  "target": "tests.test_contracts",
+  "edits_a_guard": true
+ },
+ {
+  "name": "the tracked-file scan comes back empty",
+  "file": "tests/test_contracts.py",
+  "find": "    return [f for f in git_tracked()\n            if not f.lower().endswith(NOT_TEXT) and (ROOT / f).is_file()]",
+  "replace": "    return [f for f in git_tracked() if f.endswith(\".never\")]",
+  "target": "tests.test_contracts",
+  "edits_a_guard": true
+ },
+ {
+  "name": "the keyword coordinate pattern stops seeing the json spelling",
+  "file": "tests/test_contracts.py",
+  "find": "KEYWORD_LAT = re.compile(r\"\\blat(?:itude)?[\\\"']?\\s*[:=]\\s*(-?\\d+\\.\\d{2,})\", re.I)",
+  "replace": "KEYWORD_LAT = re.compile(r\"\\blat(?:itude)?\\s*[:=]\\s*(-?\\d+\\.\\d{2,})\", re.I)",
+  "target": "tests.test_contracts",
+  "edits_a_guard": true
+ }
+]

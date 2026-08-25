@@ -1,0 +1,37 @@
+[
+ {
+  "name": "the window advice goes back to reading only the clock",
+  "file": "poller.py",
+  "find": "    clean = index is not None and ceiling is not None and index <= ceiling\n    may_open = clean and not climbing",
+  "replace": "    clean = True\n    may_open = clean and not climbing",
+  "target": "tests.test_alerts.TestVentilationAdviceNeverFightsTheAir"
+ },
+ {
+  "name": "a rising reading stops withholding the open window",
+  "file": "poller.py",
+  "find": "    may_open = clean and not climbing",
+  "replace": "    may_open = clean",
+  "target": "tests.test_alerts.TestVentilationAdviceNeverFightsTheAir"
+ },
+ {
+  "name": "no reading is treated as clean air",
+  "file": "poller.py",
+  "find": "    clean = index is not None and ceiling is not None and index <= ceiling",
+  "replace": "    clean = index is None or (ceiling is not None and index <= ceiling)",
+  "target": "tests.test_alerts.TestVentilationAdviceNeverFightsTheAir"
+ },
+ {
+  "name": "the server stops sending the decision",
+  "file": "poller.py",
+  "find": "        \"window_advice\": ventilation_advice(",
+  "replace": "        \"window_advice_disabled\": ventilation_advice(",
+  "target": "tests.test_indoor.TestTheWindowDecisionIsServed"
+ },
+ {
+  "name": "the page stops showing the reason the advice changed",
+  "file": "dashboard.html",
+  "find": "  txt.textContent = [w.advice, w.why].filter(Boolean).join(' ');",
+  "replace": "  txt.textContent = w.advice || '';",
+  "target": "tests.test_page_render.TestTheWindowPanelRendersWhatItIsTold"
+ }
+]

@@ -1,0 +1,23 @@
+[
+ {
+  "name": "an internals table names a function that was deleted in v0.5",
+  "file": "ARCHITECTURE.md",
+  "find": "| `gap_threshold_for()` | How long a silence must be",
+  "replace": "| `poll_current()` | How long a silence must be",
+  "target": "tests.test_contracts"
+ },
+ {
+  "name": "the security table loses a whole provider network",
+  "file": "SECURITY.md",
+  "find": "| `data.airquality.nsw.gov.au` | NSW and ACT regulatory readings",
+  "replace": "| `airquality.nsw.gov.au` | NSW and ACT regulatory readings",
+  "target": "tests.test_contracts"
+ },
+ {
+  "name": "an api subdomain is covered by naming only its apex",
+  "file": "SECURITY.md",
+  "find": "| `api.open-meteo.com` | The hour's wind",
+  "replace": "| `open-meteo.com` | The hour's wind",
+  "target": "tests.test_contracts"
+ }
+]

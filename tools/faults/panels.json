@@ -1,0 +1,86 @@
+[
+ {
+  "name": "the headline stops rounding the index",
+  "file": "dashboard.html",
+  "find": "  big.textContent = v==null ? '\u2014' : Math.round(v);",
+  "replace": "  big.textContent = v==null ? '\u2014' : v;",
+  "target": "tests.test_page_render.TestTheHeadline"
+ },
+ {
+  "name": "a missing index renders as zero, a claim about the air",
+  "file": "dashboard.html",
+  "find": "  big.textContent = v==null ? '\u2014' : Math.round(v);",
+  "replace": "  big.textContent = v==null ? '0' : Math.round(v);",
+  "target": "tests.test_page_render.TestTheHeadline"
+ },
+ {
+  "name": "rising and clearing get the same arrow",
+  "file": "dashboard.html",
+  "find": "  const arrow = {rising_fast:'\u25b2', rising:'\u25b2', clearing:'\u25bc'}[trend.direction] || '\u25ac';",
+  "replace": "  const arrow = '\u25ac';",
+  "target": "tests.test_page_render.TestTheTrendLine"
+ },
+ {
+  "name": "the scale label loses its fallback, so the number has no units",
+  "file": "dashboard.html",
+  "find": "  if(sn) sn.textContent = latest.scale_label || 'AQI';",
+  "replace": "  if(sn) sn.textContent = latest.scale_label;",
+  "target": "tests.test_page_render.TestTheHeaderAndTheRecord"
+ },
+ {
+  "name": "the poll countdown stops saying how old the reading is",
+  "file": "dashboard.html",
+  "find": "    (since < 1 ? 'just now' : Math.round(since)+' min ago') +",
+  "replace": "    '' +",
+  "target": "tests.test_page_render.TestThePollCountdown"
+ },
+ {
+  "name": "a flag stops being read and nothing notices",
+  "file": "poller.py",
+  "find": "    if args.serve:",
+  "replace": "    if False:",
+  "target": "tests.test_contracts.TestEveryFlagTheParserOffersIsRead"
+ },
+ {
+  "name": "readings on disk becomes the series length again",
+  "file": "dashboard.html",
+  "find": "    (rec.readings_total != null ? rec.readings_total : readings.length)\n      .toLocaleString();",
+  "replace": "    readings.length.toLocaleString();",
+  "target": "tests.test_page_render.TestTheRecordPanelIsAboutTheRecord"
+ },
+ {
+  "name": "the record span follows the headline sensor again",
+  "file": "dashboard.html",
+  "find": "  const first = rec.first_utc ? new Date(rec.first_utc)\n              : (readings.length ? readings[0].t : null);",
+  "replace": "  const first = (readings.length ? readings[0].t : null);",
+  "target": "tests.test_page_render.TestTheRecordPanelIsAboutTheRecord"
+ },
+ {
+  "name": "the server stops sending what it holds",
+  "file": "poller.py",
+  "find": "        \"record\": record,",
+  "replace": "        \"record\": {},",
+  "target": "tests.test_indoor.TestTheRecordPanelCountsTheWholeRecord"
+ },
+ {
+  "name": "the sensor choice is ignored and the headline always wins",
+  "file": "dashboard.html",
+  "find": "  if(want){\n    const picked = data.series.find(s => seriesKey(s) === want);",
+  "replace": "  if(false){\n    const picked = data.series.find(s => seriesKey(s) === want);",
+  "target": "tests.test_page_render.TestChoosingWhichSensorToLookAt"
+ },
+ {
+  "name": "a stale saved choice blanks the chart instead of falling back",
+  "file": "dashboard.html",
+  "find": "    if(picked) return picked;\n  }\n  const head = latest && latest.source;",
+  "replace": "    return picked;\n  }\n  const head = latest && latest.source;",
+  "target": "tests.test_page_render.TestChoosingWhichSensorToLookAt"
+ },
+ {
+  "name": "the picker stops saying which source is the headline",
+  "file": "dashboard.html",
+  "find": "    if(k === headKey) bits.push('headline');",
+  "replace": "",
+  "target": "tests.test_page_render.TestChoosingWhichSensorToLookAt"
+ }
+]

@@ -1,0 +1,280 @@
+name: Release
+
+# A tag is the only thing that produces a download. Nothing here runs on a
+# push to main: an installer built from an arbitrary commit is one somebody
+# will eventually hand to a user, and there would be no way to say what is in
+# it.
+on:
+  push:
+    tags: ["v*"]
+  # Buildable by hand so the packaging can be exercised without minting a
+  # version. A workflow that only ever runs at release time is one whose
+  # breakage is discovered at release time.
+  workflow_dispatch:
+
+permissions:
+  contents: write        # needed to attach artefacts to the release
+
+jobs:
+  # One job per platform, deliberately not a matrix. They differ in more than a
+  # runner label — the artefact patterns, the checksum tool and what can
+  # honestly be claimed about each are all different — and a matrix with three
+  # sets of `if:` conditions is harder to read than three jobs that say what
+  # they do.
+  #
+  # macOS is the only one anyone has installed and used. Windows and Linux are
+  # built so those users have something to download and so breakage surfaces
+  # here rather than in a bug report, but nobody has run them on real hardware.
+  # That is stated in the release notes rather than left for someone to
+  # discover. See ROADMAP §3f.
+  macos:
+    name: macOS (Apple Silicon)
+    # Apple Silicon only, deliberately — see ROADMAP §3f. Every Mac sold since
+    # 2020 is arm64, and Intel means a second runtime, build and test target
+    # for a shrinking population. macos-14 and later are arm64 runners;
+    # macos-latest has moved before and would silently change the architecture
+    # of what users download, so it is pinned.
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: The suite must pass before anything is published
+        run: python3 -m unittest discover -s tests
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache the Tauri CLI
+        uses: actions/cache@v6
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: tauri-cli-v2-${{ runner.os }}
+
+      - name: Install the Tauri CLI if it is not cached
+        run: |
+          command -v cargo-tauri >/dev/null 2>&1 \
+            || cargo install tauri-cli --version "^2.0" --locked
+
+      - name: Fetch the pinned Python runtime
+        # Verifies a recorded SHA-256 before extracting anything and fails
+        # loudly on a mismatch — see tools/fetch_runtime.py.
+        run: python3 tools/fetch_runtime.py
+
+      - name: Assemble exactly what ships
+        # Refuses to continue if the payload contains a config, a key, a
+        # database or a CSV. That check exists because those are the user's,
+        # and because the runtime tree is copied wholesale.
+        run: python3 tools/stage_bundle.py
+
+      - name: Build the app and the disk image
+        working-directory: tray
+        run: cargo tauri build
+
+      - name: Record what was built
+        run: |
+          cd tray/target/release/bundle/dmg
+          for f in *.dmg; do shasum -a 256 "$f" > "$f.sha256"; done
+          echo "--- checksums ---"
+          cat *.sha256
+
+      - name: Keep the build even when there is no release to attach to
+        uses: actions/upload-artifact@v7
+        with:
+          name: airo-macos-arm64
+          path: |
+            tray/target/release/bundle/dmg/*.dmg
+            tray/target/release/bundle/dmg/*.sha256
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            tray/target/release/bundle/dmg/*.dmg
+            tray/target/release/bundle/dmg/*.sha256
+          fail_on_unmatched_files: true
+
+  windows:
+    name: Windows (x86_64, untested)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: The suite must pass before anything is published
+        run: python -m unittest discover -s tests
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache the Tauri CLI
+        uses: actions/cache@v6
+        with:
+          path: ~/.cargo/bin/cargo-tauri.exe
+          key: tauri-cli-v2-${{ runner.os }}
+
+      - name: Install the Tauri CLI if it is not cached
+        shell: bash
+        run: |
+          command -v cargo-tauri >/dev/null 2>&1 \
+            || cargo install tauri-cli --version "^2.0" --locked
+
+      - name: Fetch the pinned Python runtime
+        run: python tools/fetch_runtime.py
+
+      - name: Assemble exactly what ships
+        run: python tools/stage_bundle.py
+
+      - name: Build the app and the installer
+        working-directory: tray
+        run: cargo tauri build
+
+      - name: Record what was built
+        shell: bash
+        run: |
+          cd tray/target/release/bundle/msi
+          for f in *.msi; do sha256sum "$f" > "$f.sha256"; done
+          echo "--- checksums ---"
+          cat *.sha256
+
+      - name: Keep the build even when there is no release to attach to
+        uses: actions/upload-artifact@v7
+        with:
+          name: airo-windows-x86_64
+          path: |
+            tray/target/release/bundle/msi/*.msi
+            tray/target/release/bundle/msi/*.sha256
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            tray/target/release/bundle/msi/*.msi
+            tray/target/release/bundle/msi/*.sha256
+          fail_on_unmatched_files: true
+
+  linux:
+    name: Linux (x86_64, untested)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: The suite must pass before anything is published
+        run: python3 -m unittest discover -s tests
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install the system libraries Tauri links against
+        # webkit2gtk and libappindicator are not on the runner by default, and
+        # a tray without an indicator library builds and then has nowhere to
+        # draw itself.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
+            patchelf libgtk-3-dev
+
+      - name: Cache the Tauri CLI
+        uses: actions/cache@v6
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: tauri-cli-v2-${{ runner.os }}
+
+      - name: Install the Tauri CLI if it is not cached
+        run: |
+          command -v cargo-tauri >/dev/null 2>&1 \
+            || cargo install tauri-cli --version "^2.0" --locked
+
+      - name: Fetch the pinned Python runtime
+        run: python3 tools/fetch_runtime.py
+
+      - name: Assemble exactly what ships
+        run: python3 tools/stage_bundle.py
+
+      - name: Build the app and the package
+        working-directory: tray
+        # .deb only. The AppImage bundler (linuxdeploy) fails on the FUSE-less
+        # runner in a way EXTRACT_AND_RUN did not resolve, and Linux is an
+        # untested platform, so v0.6.0 ships the .deb and defers the AppImage.
+        # See the tracked issue; restore `--bundles deb,appimage` when fixed.
+        run: cargo tauri build --bundles deb
+
+      - name: Record what was built
+        run: |
+          cd tray/target/release/bundle
+          for f in deb/*.deb; do
+            [ -e "$f" ] || continue
+            sha256sum "$f" > "$f.sha256"
+          done
+          echo "--- checksums ---"
+          cat deb/*.sha256 2>/dev/null || true
+
+      - name: Keep the build even when there is no release to attach to
+        uses: actions/upload-artifact@v7
+        with:
+          name: airo-linux-x86_64
+          path: |
+            tray/target/release/bundle/deb/*.deb
+            tray/target/release/bundle/deb/*.sha256
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            tray/target/release/bundle/deb/*.deb
+            tray/target/release/bundle/deb/*.sha256
+          fail_on_unmatched_files: true
+
+  # Written once, after all three have attached their files, so the notes
+  # cannot describe a platform whose build failed. Runs only for a tag.
+  notes:
+    name: Release notes
+    needs: [macos, windows, linux]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Say what each download is, and what it is not
+        uses: softprops/action-gh-release@v3
+        with:
+          # The unsigned warning is the minimum a user is owed: without it the
+          # Gatekeeper block reads as malware and they stop. The untested
+          # wording on Windows and Linux is the same principle — those builds
+          # are produced by CI and have not been installed by anyone, and
+          # letting someone find that out themselves would be worse than
+          # saying so.
+          body: |
+            ### macOS — `Airo_*.dmg`
+            **Apple Silicon (M1 and later).** Intel is not supported; see the
+            README for the command-line install.
+
+            This build is **not yet signed by Apple**. macOS will warn you the
+            first time you open it. Right-click the app and choose *Open*, then
+            *Open* again in the dialog. You only have to do this once.
+
+            ### Windows — `Airo_*.msi` · Linux — `*.deb`
+            **Built, but not yet tested on real hardware.** These are produced
+            by CI and have not been installed by anyone. They are published so
+            you have something to try and so build breakage is caught early —
+            if one does not work, the command-line install in the README does,
+            and a bug report is genuinely useful.
+
+            Windows and Linux builds are unsigned too.
+
+            ### Verifying a download
+            Every file has a `.sha256` beside it:
+            `shasum -a 256 -c Airo_*.dmg.sha256` (macOS/Linux)
+          draft: false

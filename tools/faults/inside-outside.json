@@ -1,0 +1,51 @@
+[
+ {
+  "name": "the two failure modes are checked in the wrong order",
+  "file": "analyse.py",
+  "find": "    if middle >= INDOOR_SOURCE_RATIO:\n        result[\"verdict\"] = \"indoor source\"",
+  "replace": "    if middle >= INFILTRATION_RATIO and False:\n        result[\"verdict\"] = \"indoor source\"",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "infiltration is advised to ventilate",
+  "file": "analyse.py",
+  "find": "            \"Inside is tracking outside, so the building is not keeping much \"\n            \"out. Closing up and filtering helps; opening windows does not.\")",
+  "replace": "            \"Inside is tracking outside. Ventilate to clear it.\")",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "an indoor source says ventilate without checking outside",
+  "file": "analyse.py",
+  "find": "            \"a heater. Ventilating helps, but check the outdoor reading \"\n            \"first: it is only an improvement while outside is cleaner.\")",
+  "replace": "            \"a heater. Ventilating helps.\")",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "it judges a building from any number of hours",
+  "file": "analyse.py",
+  "find": "    if len(pairs) < MIN_PAIRED_HOURS_INSIDE:",
+  "replace": "    if False:",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "a ratio is reported against air too clean to divide by",
+  "file": "analyse.py",
+  "find": "    usable = [(i, o) for _, i, o in pairs if o >= RATIO_FLOOR_UGM3]",
+  "replace": "    usable = [(i, o) for _, i, o in pairs if o > 0]",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "the verdict stops stating its grounds",
+  "file": "analyse.py",
+  "find": "        f\"claim about cause.\")",
+  "replace": "        f\"\")",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "hours are paired by position instead of by time",
+  "file": "analyse.py",
+  "find": "        outside = outdoor.get(key)",
+  "replace": "        outside = next(iter(outdoor.values()), None) if key else None",
+  "target": "tests.test_indoor"
+ }
+]

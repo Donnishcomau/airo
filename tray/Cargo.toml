@@ -1,0 +1,27 @@
+[package]
+name = "airo-tray"
+version = "0.6.0"
+description = "Airo — menu-bar / system-tray air quality readout"
+authors = ["Donnish Pty Ltd"]
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/Donnishcomau/airo"
+edition = "2021"
+rust-version = "1.77"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["time"] }
+
+[profile.release]
+# The tray is a small always-running process; optimise for size so it stays
+# an unnoticeable resident rather than a memory cost the user resents.
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

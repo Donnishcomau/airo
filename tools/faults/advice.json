@@ -1,0 +1,44 @@
+[
+ {
+  "name": "the poller stops attaching the advice it was given",
+  "file": "poller.py",
+  "find": "        if advice:\n            out[\"advice\"] = advice",
+  "replace": "        if advice and False:\n            out[\"advice\"] = advice",
+  "target": "tests.test_scales.TestAdviceIsServedNotJoinedByPosition"
+ },
+ {
+  "name": "the advice is joined to every scale's bands by position again",
+  "file": "poller.py",
+  "find": "    return [band(*entry) for entry in scale[\"bands\"]]",
+  "replace": "    au = SCALES[DEFAULT_SCALE][\"bands\"]\n    return [band(e[0], e[1], au[i][2])\n            for i, e in enumerate(scale[\"bands\"])]",
+  "target": "tests.test_scales.TestAdviceIsServedNotJoinedByPosition"
+ },
+ {
+  "name": "two of the Australian sentences swap bands",
+  "file": "poller.py",
+  "find": "            (99, \"Fair\",\n             \"Sensitive people should reduce prolonged outdoor exertion.\"),\n            (149, \"Poor\",\n             \"Close up and filter. Avoid outdoor exertion.\"),",
+  "replace": "            (99, \"Fair\",\n             \"Close up and filter. Avoid outdoor exertion.\"),\n            (149, \"Poor\",\n             \"Sensitive people should reduce prolonged outdoor exertion.\"),",
+  "target": "tests.test_scales.TestAdviceIsServedNotJoinedByPosition"
+ },
+ {
+  "name": "the page keeps its own sentence as a first-paint default",
+  "file": "dashboard.html",
+  "find": "  css: BAND_CSS[i], advice: ''}));",
+  "replace": "  css: BAND_CSS[i], advice: \"Enjoy normal activities.\"}));",
+  "target": "tests.test_scales.TestAdviceIsServedNotJoinedByPosition"
+ },
+ {
+  "name": "the page stops printing the advice the server sent",
+  "file": "dashboard.html",
+  "find": "    b.advice\n  ].filter(Boolean).join(' · ');",
+  "replace": "    ''\n  ].filter(Boolean).join(' · ');",
+  "target": "tests.test_page_render.TestTheAdviceUnderTheHeadlineIsServed"
+ },
+ {
+  "name": "the separator goes back onto the end of the measurement",
+  "file": "dashboard.html",
+  "find": "  document.getElementById('ugm').textContent = [\n    latest.pm25_10min!=null ? '≈ '+latest.pm25_10min.toFixed(1)+' µg/m³' : '',\n    b.advice\n  ].filter(Boolean).join(' · ');",
+  "replace": "  document.getElementById('ugm').textContent =\n    (latest.pm25_10min!=null ? '≈ '+latest.pm25_10min.toFixed(1)+' µg/m³ · ' : '') + b.advice;",
+  "target": "tests.test_page_render.TestTheAdviceUnderTheHeadlineIsServed"
+ }
+]

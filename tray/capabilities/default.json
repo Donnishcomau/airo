@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Minimum the tray window needs: read state and request a poll. No filesystem, shell or network permissions are granted — the Rust side reads latest.json directly and spawns the poller itself, so the webview needs neither.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-focus",
+    "core:event:default"
+  ]
+}

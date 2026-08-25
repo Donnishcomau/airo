@@ -1,0 +1,45 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Airo",
+  "version": "0.6.0",
+  "identifier": "com.donnish.airo.tray",
+  "build": {
+    "frontendDist": "ui"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Airo",
+        "width": 480,
+        "height": 620,
+        "resizable": true,
+        "visible": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app",
+      "dmg",
+      "msi",
+      "deb",
+      "appimage"
+    ],
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.ico"
+    ],
+    "shortDescription": "Local air quality readout",
+    "longDescription": "Airo shows your local air quality in the menu bar or system tray, fused from every source you configure. Data is polled and stored locally by the Airo poller.",
+    "copyright": "Copyright (C) 2026 Donnish Pty Ltd. AGPL-3.0-or-later.",
+    "resources": [
+      "payload/**/*"
+    ]
+  }
+}

@@ -1,0 +1,65 @@
+[
+ {
+  "name": "the probe stops verifying and just accepts an id",
+  "file": "poller.py",
+  "find": "    src = {\"provider\": slug, \"site_id\": site_id}",
+  "replace": "    return {\"ok\": True, \"provider\": slug, \"site_id\": site_id,\n            \"site_name\": site_id, \"placement\": \"outdoor\",\n            \"placement_note\": \"\", \"pm25\": None,\n            \"latitude\": None, \"longitude\": None,\n            \"needs_read_key\": False, \"resolution_minutes\": 10}\n    src = {\"provider\": slug, \"site_id\": site_id}",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "a 404 gets no hint about the id or a private sensor",
+  "file": "poller.py",
+  "find": "            hint = (\" \u2014 check the sensor id, and whether the sensor is \"",
+  "replace": "            hint = (\"\" or \" \" or \" \u2014 check the sensor id, and whether the sensor is \"",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "an unidentified sensor is reported as outdoor",
+  "file": "poller.py",
+  "find": "        \"placement\": placement or \"unknown\",",
+  "replace": "        \"placement\": placement or \"outdoor\",",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "the read key is echoed back in the reply",
+  "file": "poller.py",
+  "find": "        \"needs_read_key\": bool(src.get(\"read_key\")),",
+  "replace": "        \"needs_read_key\": src.get(\"read_key\"),",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "the probe route reports a failed read as success",
+  "file": "poller.py",
+  "find": "                return self._json(probed, 200 if probed.get(\"ok\") else 400)",
+  "replace": "                return self._json(probed, 200)",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "the page stops being offered every network",
+  "file": "poller.py",
+  "find": "                for slug, p in sorted(PROVIDERS.items(),",
+  "replace": "                for slug, p in sorted(list(PROVIDERS.items())[:1],",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "the provider list goes back to a shape the page cannot read",
+  "file": "poller.py",
+  "find": "                {\"name\": slug, \"label\": p.label,",
+  "replace": "                {\"value\": slug, \"label\": p.label,",
+  "target": "tests.test_settings_api"
+ },
+ {
+  "name": "a settings save destroys a private sensor's read key",
+  "file": "poller.py",
+  "find": "    if \"sources\" in clean:\n        clean = dict(clean, sources=_keep_credentials(",
+  "replace": "    if False:\n        clean = dict(clean, sources=_keep_credentials(",
+  "target": "tests.test_settings_api"
+ },
+ {
+  "name": "placement stops round-tripping through the settings page",
+  "file": "poller.py",
+  "find": "            \"placement\": src.get(\"placement\"),\n            \"latitude\": src.get(\"latitude\"),",
+  "replace": "            \"latitude\": src.get(\"latitude\"),",
+  "target": "tests.test_settings_api"
+ }
+]

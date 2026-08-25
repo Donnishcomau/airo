@@ -1,0 +1,78 @@
+#!/bin/bash
+# Airo pre-commit hook — refuse to commit user data.
+#
+# Install with:  ./tools/install-hooks.sh
+#
+# This exists because CI catching it is too late. By the time a build fails,
+# the data is already in a commit, and removing it means rewriting history.
+# The same checks run here and in CI; this one just runs first.
+#
+# The rules match by SHAPE, not by one known directory name. A narrow rule is
+# what failed before: `.gitignore` had `data/`, `--migrate-data` produced
+# `data.migrated-<timestamp>/`, and 16,995 rows of location history were
+# committed and pushed.
+
+set -uo pipefail
+
+RED="\033[31m"; YEL="\033[33m"; RESET="\033[0m"
+fail=0
+
+note() { printf "  ${RED}✗${RESET} %s\n" "$*"; fail=1; }
+
+staged() { git diff --cached --name-only --diff-filter=ACMR; }
+
+# 1. Anything shaped like a data or export directory, at any depth.
+if staged | grep -qE '(^|/)(data|export)(\.|/)|(^|/)(data|export)$'; then
+  note "a data/export directory is staged:"
+  staged | grep -E '(^|/)(data|export)(\.|/)|(^|/)(data|export)$' | sed 's/^/      /'
+fi
+
+# 2. Databases, logs, reading exports.
+if staged | grep -qE '\.(db|db-wal|db-shm|sqlite3?)$|readings.*\.csv$|\.log$'; then
+  note "a database, log or readings export is staged:"
+  staged | grep -E '\.(db|db-wal|db-shm|sqlite3?)$|readings.*\.csv$|\.log$' | sed 's/^/      /'
+fi
+
+# 3. Backup archives — these may contain readings and API keys together.
+if staged | grep -qE 'airo-backup.*\.tar\.gz$|\.airo-backup'; then
+  note "a backup archive is staged"
+fi
+
+# 4. A real configuration rather than the shipped example.
+if staged | grep -qx 'config.json'; then
+  note "config.json is staged — settings belong in ~/.airo/"
+fi
+
+# 5. Credentials.
+if staged | grep -qE '(^|/)(apikey|\.env|secrets\.json)$|\.key$'; then
+  note "a credentials file is staged"
+fi
+
+# 5a. Internal planning. Matched by shape, like everything else here: the
+#     point is not one filename but the class of document.
+if staged | grep -qE '(^|/)(INTERNAL|COMMERCIAL|PLANNING)\.md$|\.internal\.md$'; then
+  note "an internal planning document is staged:"
+  staged | grep -E '(^|/)(INTERNAL|COMMERCIAL|PLANNING)\.md$|\.internal\.md$' | sed 's/^/      /'
+fi
+
+# 6. Content check: catches a readings file committed under an innocent name.
+for f in $(staged); do
+  [ -f "$f" ] || continue
+  case "$f" in tests/*|*.md) continue ;; esac
+  if head -1 "$f" 2>/dev/null | grep -qE '^utc,local,source,pm25'; then
+    note "$f contains PM2.5 readings"
+  fi
+done
+
+if [ "$fail" -ne 0 ]; then
+  printf "\n${YEL}User data must never enter the repository.${RESET}\n"
+  printf "  It is location-tagged personal data, and PurpleAir's ToS forbids\n"
+  printf "  redistributing their readings. See CONVENTIONS.md rule 3.\n\n"
+  printf "  Your data belongs in ~/.airo/ — check with:\n"
+  printf "    python3 poller.py --where\n\n"
+  printf "  If you are certain this is a false positive:\n"
+  printf "    git commit --no-verify\n\n"
+  exit 1
+fi
+
+exit 0
