@@ -129,17 +129,30 @@ The dashboard server:
 - runs **only on demand**, started by `poller.py --open` and stopped with
   `pkill -f "poller.py --serve"`
 - serves static files from the project directory with `Cache-Control: no-store`
-- has no authentication, because it is not reachable off-machine
-- exposes a **read-only** JSON API (`/api/latest`, `/api/sources`, `/api/series`). There are
-  no write endpoints
+- exposes a read-only JSON API over `GET` (`/api/latest`, `/api/sources`, `/api/series`,
+  `/api/settings`, `/api/indoor`) and a **writing** API over `POST`. This document claimed
+  until August 2026 that there were no write endpoints, which stopped being true when the
+  settings page replaced the terminal wizard: `POST` now reaches `/api/settings`,
+  `/api/keys`, `/api/backup/export`, `/api/backup/restore`, `/api/choose-folder`,
+  `/api/sources/probe`, `/api/sources/discover`, `/api/geocode` and `/api/timezone`. A
+  reader deciding whether it is safe to expose this port was being given the wrong picture
+- authenticates every `POST` with a **per-process token**, because "not reachable
+  off-machine" was never the same as "not reachable by any page in your browser" — a
+  loopback server is reachable by every site you have open. `do_POST` runs the whole chain
+  *before* it routes, so a refused request tells an attacker nothing about which paths
+  exist: loopback `Host` → `Origin` (an absent or loopback one; `null` is refused) →
+  `Content-Type: application/json`, which denies a cross-origin caller the CORS
+  simple-request path and forces a preflight this server never answers → `X-Airo-Token`,
+  compared with `hmac.compare_digest`. The token is `secrets.token_urlsafe(32)`, minted per
+  process, never written to disk, and embedded only in the page this server itself served
 - as of v0.5, **refuses to start when the port is already in use** rather than leaving two
   servers running. A stale server from another directory serves old data and stale HTML,
   which is indistinguishable from a dead agent
 
 `python3 poller.py --doctor` reports whether anything is listening. The expected resting state is nothing.
 
-> If you change `serve_port` binding to expose it deliberately, you are on your own —
-> it serves your location history with no auth.
+> If you change `serve_port` binding to expose it deliberately, you are on your own — the
+> `GET` API has no authentication at all, and it serves your location history.
 
 ---
 
@@ -149,7 +162,10 @@ The dashboard server:
   `systemd --user` timer on Linux, a per-user Task Scheduler entry on Windows. Never a system
   daemon
 - No `sudo` or elevation anywhere in the install path
-- The plist sets a minimal explicit `PATH` rather than inheriting the shell environment
+- Nothing in the scheduled task resolves a program through `PATH`. This document used to
+  say the plist "sets a minimal explicit `PATH`"; it does not set one at all, which reads
+  as a missing control and is not — launchd does not inherit your shell environment, and
+  every `ProgramArguments` entry is an absolute path, so there is no lookup to hijack
 - No code in this repository signs anything. This document previously said the generated
   `.app` bundle was ad-hoc signed with `codesign -s -`; that was true of a shell installer
   deleted in August 2026, and no call to `codesign` has existed since. Assume **no

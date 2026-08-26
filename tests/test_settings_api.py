@@ -1857,6 +1857,31 @@ class TestEveryValidatorRefusal(SettingsCase):
         errors = self.bad({"sources": [{"provider": "fakefree", "site_id": "  "}]})
         self.assertIn("site_id", errors["sources"])
 
+    def test_a_site_id_carrying_markup_or_a_path_is_refused(self):
+        """site_id is not just an identifier: it becomes a CSV filename in
+        store.export_csv and an attribute value in the dashboard's source
+        picker. Both of those were near-misses rather than exploits, which is
+        exactly why the guard belongs here and not at either sink -- a third
+        sink added later inherits it for free."""
+        for bad_id in ('../../../../etc/passwd',
+                       '1" onmouseover="x',
+                       '1/../2',
+                       'a' * 65):
+            with self.subTest(site_id=bad_id):
+                errors = self.bad(
+                    {"sources": [{"provider": "fakefree", "site_id": bad_id}]})
+                self.assertIn("site_id", errors["sources"])
+
+    def test_an_ordinary_site_id_still_passes(self):
+        """The guard is worth nothing if it rejects what the providers return.
+        Every one of these is a shape a real discovery response produces."""
+        for good_id in ("42", "near-dead", "SYD_1", "a.b-c_1"):
+            with self.subTest(site_id=good_id):
+                clean, errors = poller.validate_settings(
+                    {"sources": [{"provider": "fakefree", "site_id": good_id}]})
+                self.assertEqual({}, errors)
+                self.assertEqual(good_id, clean["sources"][0]["site_id"])
+
     def test_a_source_naming_an_unknown_provider_is_refused_by_name(self):
         errors = self.bad({"sources": [{"provider": "atlantis", "site_id": "1"}]})
         self.assertIn("atlantis", errors["sources"])

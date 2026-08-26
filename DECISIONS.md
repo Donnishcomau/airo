@@ -270,3 +270,52 @@ decisions in a second language is the cost this project has repeatedly refused
 **Reversed by** — nothing on the horizon. A platform that cannot run Python at
 all would force it, and at that point the tray's own tests are the model:
 Rust that renders a decision Python made, not Rust that makes one.
+
+---
+
+## D14 · Provider identifiers are guarded where they arrive, not at each sink
+
+**Chosen** — `site_id` is checked for charset and length once, in
+`validate_settings`'s `_sources()`, at the point a value from a discovery
+response first enters the config. Sinks downstream assume it is safe.
+
+**Rejected** — escaping or sanitising at each sink instead: `basename()` in
+`store.export_csv`, `esc()` on the dashboard's `<option value>`, and whatever
+the next sink turns out to need.
+
+**Why** — an August 2026 audit raised four candidates, and three were refuted
+on inspection. The `X-API-Key` that survives a cross-host redirect needs an
+attacker already holding a valid TLS session for `api.purpleair.com`, which is
+the provider's own infrastructure and out of scope. The dashboard's unescaped
+`<option value>` cannot execute: the sink is `innerHTML` on a `<select>`, and
+the HTML parser's "in select" insertion mode discards `<img>` and every other
+tag outright, while `</select>` cannot break out of a context element that is
+not on the open-elements stack — the residual attribute injection does not fire
+in a native dropdown popup either. `export_csv`'s traversal component is
+`qld-..`, a literal directory name POSIX never resolves, so it fails
+`FileNotFoundError` rather than escaping the export directory.
+
+Three near-misses is not three separate strokes of luck. All three were fed by
+one value that nothing had ever constrained beyond non-emptiness, and each was
+saved by an accident of a different subsystem — a parser's insertion mode, a
+path separator's position, a TLS handshake. The next sink inherits none of
+those accidents. Guarding the entry point is one check instead of four, and it
+is the only version that covers the sink nobody has written yet.
+
+`site_name` deliberately gets no such guard, and the distinction is the whole
+point of the entry: ids are machine tokens and every provider's is a number or
+a short slug, so a charset costs nothing real. Names are human text — Unicode,
+apostrophes, ampersands — and constraining them breaks real monitors. Names are
+escaped where they are rendered instead, which is why `tray/ui/index.html`
+gained the `esc()` that `dashboard.html` already carried.
+
+**Reversed by** — a provider whose identifiers are genuinely free-form. At that
+point the guard moves to a per-provider declaration rather than widening for
+everyone, because widening it to fit the loosest provider is the same as not
+having it.
+
+**Enforced by** — `test_settings_api.py`, in both directions: ids carrying
+markup, a traversal or excess length are refused, and the shapes real discovery
+responses return still pass. The second half is the one that matters — a guard
+that rejects real `site_id`s is worse than no guard, because it fails at setup
+where nobody can tell it from a provider outage.
