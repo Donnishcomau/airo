@@ -12,7 +12,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Added
 
 - **Every source file states its own licence.** Two SPDX lines — the copyright holder and
-  `AGPL-3.0-or-later` — now head every tracked `.py` and `.rs`. LICENSE has always quoted the
+  `AGPL-3.0-or-later` — now head every tracked `.py`, `.rs`, `.html` and `.sh` file. LICENSE has always quoted the
   FSF's guidance to attach a notice to the start of each file; only the root LICENSE actually
   carried one, so a module pasted into a gist arrived stating nothing about what it is.
   `test_contracts.py::TestEverySourceFileCarriesItsLicence` enumerates the tree by extension
