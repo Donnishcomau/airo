@@ -76,14 +76,6 @@ the two items above. Until signing lands, the release notes tell users what the
 warning is and how to get past it. One loose end that blocks nobody:
 `tauri.conf.json` carries its own version number, which is one too many.
 
-### 3e. Publish from a fresh history — `blocked on the maintainer`
-
-The working files that named the maintainer's own place are gone from the tree,
-and deleting a file never removes what is behind it from a repository's history.
-The public repository is therefore made from a fresh history rather than by
-trusting the removals — a rewrite is not something to do to a branch other people
-may have pulled, and what is acceptable to publish is a judgement, not a task.
-
 ### 6. Data quality — what is still wanted — `todo`
 
 Quarantine ships, and quality is decided once at ingest by
@@ -127,18 +119,19 @@ The numbers survive because tests, code comments and other documents cite them.
 | #0 | Renamed to Airo | CHANGELOG 0.4.0 |
 | #1, #2 | Test suite, and CI on three platforms | ARCHITECTURE §7a; CHANGELOG 0.5.0 |
 | #3 | AGPL-3.0-or-later, with a commercial licence alongside | [LICENSING.md](LICENSING.md); CHANGELOG 0.5.0 |
-| #3a | Contributor licence agreement | [CLA.md](CLA.md), [CONTRIBUTING.md](CONTRIBUTING.md); CHANGELOG Unreleased. Not yet reviewed by a lawyer, which CLA.md says at the top |
-| #3b, #17 | Screenshots and a demo | README; CHANGELOG Unreleased |
-| #3d | Settings without a terminal | ARCHITECTURE §2.8 and §5; CHANGELOG Unreleased |
+| #3a | Contributor licence agreement | [CLA.md](CLA.md), [CONTRIBUTING.md](CONTRIBUTING.md); CHANGELOG 0.6.0. Not yet reviewed by a lawyer, which CLA.md says at the top |
+| #3b, #17 | Screenshots and a demo | README; CHANGELOG 0.6.0 |
+| #3d | Settings without a terminal | ARCHITECTURE §2.8 and §5; CHANGELOG 0.6.0 |
+| #3e | Published from a fresh root | [RELEASING §2](RELEASING.md); DECISIONS D9. The public repository's history begins at one parentless commit holding the current tree |
 | #4 | Configurable AQI scale | ARCHITECTURE §4; DECISIONS D2 |
 | #5 | Daylight saving | ARCHITECTURE §3.2, and two rows of the register below |
 | #6 | Data-quality quarantine | ARCHITECTURE §3.5; DECISIONS D6 — what is still wanted is above |
 | #7 | Chart reduction that keeps the peaks | ARCHITECTURE §3.3; `store.series()` |
 | #8 | CSV scaling | superseded by SQLite — ARCHITECTURE §2.5a; DECISIONS D4 |
-| #9 | Weather capture, correlation, six-hour outlook | CHANGELOG Unreleased; the original 22-day finding is in [RESEARCH.md](RESEARCH.md) §3 |
+| #9 | Weather capture, correlation, six-hour outlook | CHANGELOG 0.6.0; the original 22-day finding is in [RESEARCH.md](RESEARCH.md) §3 |
 | #10 | Threshold and trend alerting | ARCHITECTURE §2.4; CHANGELOG 0.3.0 — the remaining niggle is above |
 | #11, #13 | Multiple sources per location, and export for analysis | README; DECISIONS D5; ARCHITECTURE §2.5a; CHANGELOG 0.5.0 |
-| #12 | One widget, not three | CHANGELOG Unreleased |
+| #12 | One widget, not three | CHANGELOG 0.6.0 |
 | #14, #14a | Linux and Windows, and the cross-platform tray | CHANGELOG 0.5.0 |
 | #18, #19 | Interpretation guide, and sensor siting | README |
 | A–H, K, L | Known issues | CHANGELOG, and the register below |
@@ -176,6 +169,7 @@ and that part is testable even when the event is not preventable.
 | Weather stored in the wrong unit | The response's declared units are compared against what was asked for on every fetch, and a mismatch is refused rather than converted. Phase B's finding is stated in m/s and the API sends km/h by default — a silent change would move every threshold by 3.6× without failing anything | `test_weather.py::TestUnitsAreNeverAssumed` |
 | A missing hour of weather read as calm | Nulls are stored as NULL, never zero, and an hour with nothing in it is dropped rather than invented. Calm is the condition the whole premise turns on, so a gap that looks calm would corrupt the finding | `test_weather.py::TestMissingHoursStayMissing` |
 | Weather capture costing a reading | Every failure in the weather path is logged and swallowed. A missing reading is the product failing; a missing hour of wind is not | `test_weather.py::TestWeatherNeverCostsAReading` |
+| **A file copied out of the tree stating no licence.** Only the root LICENSE carried the notice — and LICENSE itself quotes the FSF's guidance to attach one to the start of each source file. A module lifted into a gist or into somebody else's project arrived saying nothing about what it is, which is the one case a root LICENSE cannot reach | Two SPDX lines at the head of every tracked `.py` and `.rs`, enumerated by extension off `git ls-files` rather than from a list that stops being true when someone adds a file. The holder, year and identifier are declared once, in the check, and `tray/Cargo.toml` and `tauri.conf.json` are compared against them rather than trusted to still agree | `test_contracts.py::TestEverySourceFileCarriesItsLicence` |
 
 ### Privacy
 
@@ -285,6 +279,7 @@ never a trap.
 | **A forecast without reasonable grounds (ACL s4), now that there is one.** The guardrails shipped a year before the feature; Phase C is the part that has to earn its way past them | The outlook is gated on measured skill and stays silent at 29 verified outcomes, speaking at 30 — both sides tested, because a gate that never opens is a disabled feature and one that always opens is not a gate. It is scored against persistence, so beating autocorrelation is not mistaken for skill. Its grounds are the user's **own** wind bands with the hour count stated, reusing Phase B's table so the two cannot disagree. Predictions are written down and verified against what actually happened — an hour with no reading stays pending rather than being scored against a gap, and nothing is counted twice. PurpleAir is excluded from training by construction (ToS §4.4) and the refusal says so, which is a different sentence from "no data yet" | `test_forecast_outlook.py` |
 | A new surface, module or provider added without its guards | Contracts enumerate from disk and from `PROVIDERS` rather than from a list, so a file that does not exist yet is already in scope | `test_contracts.py` |
 | Contributor onboarding cost | at least 1493 Python and 46 Rust tests, no runtime dependencies, no build step | CI |
+| **A finished item pointing at a section that has moved.** Five rows of the finished table cited "CHANGELOG Unreleased" — true on the day each was written, and false the moment 0.6.0 was cut, because promotion renames the heading and the citations do not follow. The table then sent the reader with the best reason to check where a feature shipped to somebody else's release notes | A finished item must cite a released version, and every version it cites must be a section the CHANGELOG actually has. Enforced at the moment the drift enters — cutting a release runs the check — rather than written down as another step in RELEASING §1.2, which is prose and cannot fail | `test_contracts.py::TestTheRoadmapCitesWhereWorkLanded` |
 
 ### Not mitigated, deliberately
 

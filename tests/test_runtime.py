@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """The Python runtime the installed app carries.
 
 Airo's own code needs no dependencies, but the person the installer is for

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """The built app, exercised as a user would get it.
 
 Everything else in this suite runs the code from the checkout. That is not

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Dashboard date-handling tests, run under two timezones.
 
 ROADMAP #5. The chart x-axis is a linear scale over epoch-ms with custom tick

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """No test may reach the internet.
 
 Found by an end-to-end test that showed weather data in a fresh install with an

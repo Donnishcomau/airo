@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """The dashboard's own JavaScript, executed against a payload.
 
 Until now the pages were only syntax-checked: `tools/check.py` runs

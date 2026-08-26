@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Weather capture — ROADMAP #9 Phase A.
 
 Airo has always recorded what the air did and never why. These cover the

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Display units follow the reader; the stored number never moves.
 
 Rule 6 says raw µg/m³ is canonical, and the reasoning generalises: a database

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """No test may reach the session manager the developer is logged in to.
 
 The fourth guard of this shape, after `netguard` (no test reaches the

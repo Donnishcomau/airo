@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """An indoor sensor never speaks for the air outside.
 
 `nearest` is the default fusion rule and a sensor in your house is ~0 km away,

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """The project outliving its maintainer, or not -- and what that costs a user.
 
 Airo is one person's side project reading four public APIs. The realistic
