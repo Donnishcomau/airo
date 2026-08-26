@@ -218,6 +218,7 @@ The individual commands, if you want them separately:
 
 ```bash
 python3 -m unittest discover -s tests -v
+python3 -m unittest tests.test_store -k TestGapRepair   # one module, one class or test
 # Every shipped module and every tool, globbed off disk rather than listed --
 # which is what tools/check.py does. A hand-written list here went three modules
 # stale (units.py, weather.py, backup.py) and read as complete the whole time.
