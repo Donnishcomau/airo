@@ -873,7 +873,7 @@ class TestEverySourceFileCarriesItsLicence(unittest.TestCase):
         return f"SPDX-License-Identifier: {self.SPDX}"
 
     def sources(self):
-        """Every tracked Python and Rust file, read off `git ls-files`.
+        """Every tracked source file, read off `git ls-files`.
 
         By extension over the tracked tree rather than from a curated list.
         A list of "the files that need a header" stops being true the moment
@@ -881,9 +881,16 @@ class TestEverySourceFileCarriesItsLicence(unittest.TestCase):
         while covering less. `git_tracked()` is the one way this file asks
         what is in the tree, and it raises rather than returning an empty
         list when git cannot answer.
+
+        `.html` and `.sh` are in scope alongside `.py` and `.rs` because the
+        pages *are* source here -- the dashboard carries its own chart
+        library -- and a page saved out of a browser or a script copied into
+        another repo is the same pasted-into-a-gist case the class docstring
+        argues from.
         """
         out = [ROOT / f for f in git_tracked()
-               if f.endswith((".py", ".rs")) and (ROOT / f).is_file()]
+               if f.endswith((".py", ".rs", ".html", ".sh"))
+               and (ROOT / f).is_file()]
         self.assertGreater(
             len(out), 40,
             "the source walk found almost nothing to check, which is how a "
