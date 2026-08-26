@@ -1,0 +1,128 @@
+[
+ {
+  "name": "the headline stops excluding indoor",
+  "file": "poller.py",
+  "find": "result = fusion.fuse(outdoor, rule, location, history=history)",
+  "replace": "result = fusion.fuse(readings, rule, location, history=history)",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "the weather join stops excluding indoor",
+  "file": "store.py",
+  "find": "    if outdoor_only:\n        # Added here, with its arguments",
+  "replace": "    if False:\n        # Added here, with its arguments",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "unknown counts as outdoor",
+  "file": "store.py",
+  "find": "OUTDOOR_PLACEMENTS = (\"outdoor\",)",
+  "replace": "OUTDOOR_PLACEMENTS = (\"outdoor\", \"unknown\")",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "location_type is no longer requested",
+  "file": "poller.py",
+  "find": "        \"location_type\",\n",
+  "replace": "",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "purpleair guesses outdoor for a code it does not know",
+  "file": "poller.py",
+  "find": "        return PURPLEAIR_PLACEMENT.get(int(value), \"unknown\")",
+  "replace": "        return PURPLEAIR_PLACEMENT.get(int(value), \"outdoor\")",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "the v8 migration marks existing sources unknown",
+  "file": "store.py",
+  "find": "    conn.execute(\"UPDATE sources SET placement = 'outdoor' \"",
+  "replace": "    conn.execute(\"UPDATE sources SET placement = 'unknown' \"",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "indoor is dropped from what is served",
+  "file": "poller.py",
+  "find": "        \"sources\": _served_sources(readings, result, as_view),",
+  "replace": "        \"sources\": [as_view(r) for r in result.get(\"sources\") or []],",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "a poll that learns nothing overwrites a known placement",
+  "file": "store.py",
+  "find": "COALESCE(NULLIF(excluded.placement, 'unknown'),",
+  "replace": "COALESCE(excluded.placement, NULLIF(",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "a regulatory network stops defaulting to outdoor",
+  "file": "poller.py",
+  "find": "    default_placement = \"outdoor\"\n\n    #: The unit this provider's",
+  "replace": "    default_placement = None\n\n    #: The unit this provider's",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "a single-channel sensor is condemned by a confidence figure",
+  "file": "store.py",
+  "find": "    half_reported = (pm25_a is None) != (pm25_b is None)\n    if (not half_reported and confidence is not None",
+  "replace": "    half_reported = False\n    if (not half_reported and confidence is not None",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "a genuine two-channel disagreement stops being a fault",
+  "file": "store.py",
+  "find": "            if lo == 0 or hi / max(lo, 0.1) > CHANNEL_DISAGREE_RATIO:",
+  "replace": "            if False:",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "the v9 repair never runs",
+  "file": "store.py",
+  "find": "    if _schema_version(conn) < 9:\n        _reassess_single_channel(conn)",
+  "replace": "    if False:\n        _reassess_single_channel(conn)",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "the v9 repair also redoes the smoke reassessment's work",
+  "file": "store.py",
+  "find": "        \"  AND ((pm25_a IS NULL) <> (pm25_b IS NULL))\").fetchall()",
+  "replace": "        \"\").fetchall()",
+  "target": "tests.test_store"
+ },
+ {
+  "name": "the split happens before annotate, blinding the indoor row",
+  "file": "poller.py",
+  "find": "    readings = fusion.annotate(store.latest_per_source(conn), location)",
+  "replace": "    readings = store.latest_per_source(conn)",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "the indoor row stops being labelled indoor",
+  "file": "dashboard.html",
+  "find": "    if(s.placement === 'indoor') tags.push('<span class=\"srcTag\">indoor</span>');",
+  "replace": "",
+  "target": "tests.test_page_render"
+ },
+ {
+  "name": "the placement note is dropped from the row",
+  "file": "dashboard.html",
+  "find": "        [esc(s.placement_note),",
+  "replace": "        [null,",
+  "target": "tests.test_page_render"
+ },
+ {
+  "name": "the server stops explaining the empty peer column",
+  "file": "poller.py",
+  "find": "            \"placement_note\": (\n                None if store.is_outdoor(r.get(\"placement\"))\n                else _placement_note(str(r.get(\"placement\") or \"unknown\"))),",
+  "replace": "            \"placement_note\": None,",
+  "target": "tests.test_indoor"
+ },
+ {
+  "name": "every row gets a note, including the unremarkable ones",
+  "file": "poller.py",
+  "find": "                None if store.is_outdoor(r.get(\"placement\"))\n                else _placement_note(str(r.get(\"placement\") or \"unknown\"))),",
+  "replace": "                _placement_note(str(r.get(\"placement\") or \"unknown\"))),",
+  "target": "tests.test_indoor"
+ }
+]

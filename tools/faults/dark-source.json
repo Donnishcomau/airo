@@ -1,0 +1,51 @@
+[
+ {
+  "name": "a successful fetch counts as a reporting sensor again",
+  "file": "poller.py",
+  "find": "                    record_source_result(\n                        fail_state, label,\n                        source_is_reporting(conn, sid, provider, cfg),\n                        threshold, cfg, reason=\"stale\")",
+  "replace": "                    record_source_result(\n                        fail_state, label, True,\n                        threshold, cfg, reason=\"stale\")",
+  "target": "tests.test_end_to_end.TestASensorGoesDarkAndComesBack"
+ },
+ {
+  "name": "freshness is never judged, so nothing is ever dark",
+  "file": "poller.py",
+  "find": "    last = store.last_observed(conn, source_id)\n    if last is None:\n        return False",
+  "replace": "    last = store.last_observed(conn, source_id)\n    if last is not None:\n        return True\n    if last is None:\n        return False",
+  "target": "tests.test_alerts"
+ },
+ {
+  "name": "a dark sensor is reported as an unreachable provider",
+  "file": "poller.py",
+  "find": "                        threshold, cfg, reason=\"stale\")",
+  "replace": "                        threshold, cfg, reason=\"unreachable\")",
+  "target": "tests.test_end_to_end.TestASensorGoesDarkAndComesBack"
+ },
+ {
+  "name": "the silence window stops scaling with the provider cadence",
+  "file": "poller.py",
+  "find": "    return (now - last) <= gap_threshold_for(provider, cfg)",
+  "replace": "    return (now - last) <= timedelta(hours=12)",
+  "target": "tests.test_alerts"
+ },
+ {
+  "name": "a night with no readings vanishes from the grid again",
+  "file": "dashboard.html",
+  "find": "      const k = localDateKey(d);\n      if(!map.has(k)) map.set(k, {});",
+  "replace": "      const k = localDateKey(d);\n      if(false) map.set(k, {});",
+  "target": "tests.test_page_render.TestTheEveningGrid"
+ },
+ {
+  "name": "the grid stops saying which sensor it describes",
+  "file": "dashboard.html",
+  "find": "  const viaRaw = (latest && latest.source && latest.source.site_name)\n            || (latest && latest.provenance) || null;\n  const via = viaRaw ? esc(viaRaw) : null;",
+  "replace": "  const via = null;",
+  "target": "tests.test_page_render.TestTheGridSaysWhoseReadingsTheseAre"
+ },
+ {
+  "name": "the grid stops explaining what a blank hour means",
+  "file": "dashboard.html",
+  "find": "    'A blank hour is one that sensor did not report; any other sources you ' +\n    'have are unaffected.</div>';",
+  "replace": "    '</div>';",
+  "target": "tests.test_page_render.TestTheGridSaysWhoseReadingsTheseAre"
+ }
+]

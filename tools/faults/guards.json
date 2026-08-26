@@ -1,0 +1,48 @@
+[
+ {
+  "name": "the symlink is hashed as separate content again",
+  "file": "tools/check.py",
+  "find": "        if path.is_symlink():",
+  "replace": "        if False:",
+  "target": "tests.test_user_data_gate"
+ },
+ {
+  "name": "a write through a symlink stops being noticed",
+  "file": "tools/check.py",
+  "find": "    for path in sorted(root.rglob(\"*\")):\n        if not path.is_file():\n            continue",
+  "replace": "    for path in []:\n        if not path.is_file():\n            continue",
+  "target": "tests.test_user_data_gate"
+ },
+ {
+  "name": "the notify guard stops replacing poller.notify",
+  "file": "tests/notifyguard.py",
+  "find": "    poller.notify = guard\n    _STACK.append(guard)",
+  "replace": "    _STACK.append(guard)",
+  "target": "tests.test_indoor",
+  "edits_a_guard": true
+ },
+ {
+  "name": "the notification contract stops enumerating",
+  "file": "tests/test_contracts.py",
+  "find": "            can_notify = (\"maybe_alert(\" in text or \"--test-alert\" in text\n                          or \"poller.notify\" in text)",
+  "replace": "            can_notify = False",
+  "target": "tests.test_contracts",
+  "edits_a_guard": true
+ },
+ {
+  "name": "the session guard stops replacing subprocess.run",
+  "file": "tests/schedguard.py",
+  "find": "    subprocess.run = guarded_run\n    guard._real = real_run",
+  "replace": "    guard._real = real_run",
+  "target": "tests.test_scheduler",
+  "edits_a_guard": true
+ },
+ {
+  "name": "the session-manager contract stops enumerating",
+  "file": "tests/test_contracts.py",
+  "find": "            if \"import scheduler\" not in text:\n                continue",
+  "replace": "            continue",
+  "target": "tests.test_contracts",
+  "edits_a_guard": true
+ }
+]

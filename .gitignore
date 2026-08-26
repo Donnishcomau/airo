@@ -1,0 +1,109 @@
+# Logged data — never commit it. This is location-tagged personal data, and
+# PurpleAir's ToS forbids redistributing their readings.
+#
+# The bare `data/` rule was not enough: `--migrate-data` leaves the old folder
+# as `data.migrated-<timestamp>/`, which matched nothing and was committed --
+# 16,995 rows of one person's history. Match anything that looks like a data
+# directory, wherever it sits.
+data/
+data.*/
+**/data/
+**/data.*/
+*.db
+*.db-shm
+*.db-wal
+readings*.csv
+airo-backup-*.tar.gz
+*.airo-backup.tar.gz
+
+# A root Airo.app left over from install.sh, which was deleted in Aug 2026.
+# Nothing in the tree builds one any more: `scheduler.py install` still points
+# launchd at it if one is already there (scheduler.py, macos_install), and
+# otherwise runs poller.py directly. The macOS app that actually ships is the
+# Tauri bundle, built into tray/target/ and ignored by that rule below.
+# Kept because an old checkout still has one, with absolute paths baked in.
+Airo.app/
+
+# Rust/Tauri build output for the tray
+tray/target/
+tray/gen/
+
+# The bundled Python runtime, fetched by tools/fetch_runtime.py. ~69 MB of
+# someone else's binaries: reproducible from the pinned version and checksum
+# in that script, so it is built rather than committed.
+tray/runtime/
+
+# Assembled by tools/stage_bundle.py: exactly what the app ships. Built from
+# the repo plus the fetched runtime, so it is reproducible and not committed.
+tray/payload/
+
+# Exported CSV — same data, same restrictions as data/
+export/
+
+# Never commit credentials. The API key belongs in ~/.airo/apikey,
+# but this is a backstop in case anything lands here.
+apikey
+*.key
+.env
+secrets.json
+
+# Your settings. These hold a location and chosen sensors -- personal data.
+# setup.py writes to ~/.airo/config.json, outside the repo, precisely so this
+# cannot happen by accident. This is a backstop for hand-configured checkouts.
+config.json
+config.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# macOS
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# Internal planning: commercial strategy and the legal analysis of third-party
+# terms. The obligations are public (LICENSING.md); the reasoning is not.
+INTERNAL.md
+COMMERCIAL.md
+PLANNING.md
+*.internal.md
+
+# Loop and agent state: per-machine, rewritten constantly, and meaningless to
+# anyone else. Matched by SHAPE rather than by the one filename that caused
+# the problem -- the same rule the user-data guards follow, and for the same
+# reason: a rule naming one file is the failure that leaked 16,995 rows.
+*.local.md
+.claude/*.local.*
+.claude/loop-state/
+
+# Agent command prompts. Ignored as a whole and chosen back in one at a time,
+# the same way private/ is handled and for the same reason: a prompt written
+# in a hurry names branches, paths and whatever the maintainer was doing that
+# afternoon, and the safe default is for it not to be published.
+#
+# There is no shape that separates a one-shot prompt from a reusable one --
+# `ship.md` and `goal.md` look identical from outside -- so the rule cannot
+# match by shape here, and pretending it could would be a rule that quietly
+# lets the next one through. Deliberate instead: what is checked in is
+# documentation of a maintenance workflow, and it is named below.
+#
+# Already-tracked files are unaffected by an ignore rule; the exceptions are
+# written out so `git add` still works on them and so the intent is legible.
+.claude/commands/*.md
+!.claude/commands/goal.md
+!.claude/commands/pr-watch.md
+
+# The maintainer's own working knowledge: todos, session records, decisions in
+# progress, and snapshots of a real install's configuration. All of it is
+# personal or location-bearing, and none of it is needed to build or
+# contribute.
+#
+# Ignored as a whole folder rather than file by file, so a note written in a
+# hurry is safe by default. The public tree has to be chosen deliberately --
+# which is the opposite of how the suburb, the sensor index and the site name
+# each got committed before.
+private/

@@ -1,0 +1,1269 @@
+<!DOCTYPE html>
+<!--
+  Airo — settings.
+
+  Every setting the app has, on one page: where you are, which monitors to
+  read, account keys, alert thresholds, where readings are stored, and backup
+  and restore. This replaced a terminal wizard, because asking someone who has
+  never opened a terminal to run one is the point at which they stop.
+
+  How it fits the whole
+  ---------------------
+  Rendered by poller.py, not served as a static file — it substitutes a
+  per-process token where TOKEN sits below, and if you ever see the literal
+  placeholder in the page it means the static handler answered instead and
+  every save on it will fail.
+
+  It reads and writes one endpoint per concern:
+
+      GET  /api/settings          the whole current config, secrets scrubbed
+      POST /api/settings          a patch — only what one panel owns
+      POST /api/keys              an account key, which never comes back out
+      GET  /api/sources/discover  monitors near the configured location
+      POST /api/backup/*          export, inspect, restore
+      POST /api/choose-folder     a native folder picker, run by the server
+
+  **The server validates; this page only collects.** `validate_settings()` in
+  poller.py is the single validator, shared with setup.py, so the two front
+  ends cannot disagree about what a valid setting is. Anything this page
+  checked for itself would be a second opinion, and the one that is easier to
+  bypass. Field errors come back keyed by path and are painted next to the
+  field that caused them.
+
+  What it assumes
+  ---------------
+  * **Same-origin, loopback, one process.** Four things must all hold for a
+    write to be accepted, and they are checked server-side, not here: the Host
+    header is loopback, the Origin is allowed, the Content-Type is JSON (so a
+    cross-origin attempt stops being a CORS "simple request" and needs a
+    preflight that is never answered), and the token matches. The token lives
+    only in the running process and is never written to disk.
+  * **A restart invalidates the token**, so a page left open overnight fails
+    its next save with 403. That is a reload, not an error, and it is reported
+    as one — saying "forbidden" sends people hunting for a permissions problem
+    that does not exist.
+  * **A patch, never the whole config.** Each panel sends only its own keys, so
+    a stale tab cannot revert changes made elsewhere since it loaded.
+  * **Keys are write-only.** A saved key is never returned by any endpoint; the
+    field shows "set" and nothing more. `scrub_secrets()` is what guarantees
+    that, and it is the thing to extend when a new secret appears.
+
+  What must not be done here
+  --------------------------
+  * **No validation rule written into this page.** It belongs in the shared
+    validator, or the terminal path and this one will drift.
+  * **No second way to POST.** Every write goes through `postJSON()`, which
+    owns the token header, the unreachable-server message and the 403 banner.
+    Six call sites once hand-rolled all four; two of the six had no 403 branch
+    at all, so the same restart was reported two different ways depending on
+    which button had been pressed. And one dropped its result entirely, which
+    is how a rejected read key could vanish into a page reload.
+  * **No external subresource** — same reason as the dashboard: it would leak
+    the viewer's IP, and the build fails on it.
+  * **Nothing interpolated into HTML unescaped.** Everything here is built by
+    string concatenation, so esc() is the only thing standing between a site
+    name from a provider's API and script execution in the page.
+  * **Never render a key**, not even partially, and never log one.
+
+  Reading it
+  ----------
+      style block   shared with the dashboard by convention, not by import
+      body          one empty container per panel
+      script block  plumbing   TOKEN, postJSON(), panel(), load/save,
+                               field(), draw()
+                    panels     drawLocation, drawSources, drawKeys,
+                               drawAlerts, drawData, drawBackup, drawFooter
+
+  Tag names are spelled out rather than written as tags: the verification block
+  extracts this file's script by regex, and a literal opening tag inside a
+  comment breaks that extraction.
+-->
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Airo — settings</title>
+<style>
+  /* Same instrument, its back panel. The tokens, the two type registers and
+     the status line are the dashboard's, deliberately duplicated rather than
+     imported: there is no build step and no shared stylesheet, so the price
+     of one file per page is that the palette is written twice. The parity
+     that matters is enforced by test_surface_parity.py, not by a bundler.
+
+     Register rule, as next door: machine facts, paths and values are mono;
+     anything explaining a choice to a person is sans. On a settings page
+     that split does real work -- it separates what you are setting from
+     what the setting means. */
+  :root{
+    --bg:#0c0f12; --panel:#12161b; --panel2:#181e24; --line:#222a31;
+    --edge:#2f3a44; --text:#e3e9ef; --dim:#93a2b0; --faint:#5f6d7a;
+    --accent:#57ccd8; --accent2:#173f46;
+    --ok:#4cae4c; --warn:#e8a33d; --bad:#dd5c3a;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,"DejaVu Sans Mono",Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Ubuntu,"Helvetica Neue",sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);padding:0 0 24px;
+    font:13.5px/1.55 var(--sans);-webkit-font-smoothing:antialiased}
+  a{color:var(--accent)}
+  ::selection{background:var(--accent2);color:var(--text)}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+
+  .bar{position:sticky;top:0;z-index:5;display:flex;align-items:center;flex-wrap:wrap;
+    margin:0 0 18px;padding:0 16px;background:var(--panel);
+    border-bottom:1px solid var(--edge);font-family:var(--mono);font-size:11.5px;color:var(--dim)}
+  .bar h1{font:600 13px/1 var(--mono);margin:0;padding:9px 14px 9px 0;
+    color:var(--text);letter-spacing:.02em}
+  .bar h1::before{content:"▮";color:var(--accent);margin-right:7px;font-size:11px}
+  .bar h1 span{color:var(--faint);font-weight:400;margin-left:7px}
+  .bar .spacer{flex:1}
+  .key{padding:9px 12px;border-left:1px solid var(--line);color:var(--dim);
+    text-decoration:none;white-space:nowrap;transition:color .15s,background .15s}
+  .key:hover{color:var(--text);background:var(--panel2)}
+  .key kbd{font:inherit;color:var(--accent);border:1px solid var(--accent2);
+    border-radius:3px;padding:0 4px;margin-right:5px}
+
+  .sub{color:var(--dim);font-size:12px;margin-bottom:18px}
+  .sub code{font-family:var(--mono);font-size:11.5px;background:var(--panel2);
+    padding:1px 5px;border-radius:2px;color:var(--text)}
+  .wrap{max-width:880px;margin:0 auto;padding:0 16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:3px;padding:14px}
+  .card+.card{margin-top:12px}
+  .card h2{font:600 10.5px/1 var(--mono);text-transform:uppercase;letter-spacing:.12em;
+    color:var(--dim);margin:0 0 6px;display:flex;align-items:center;gap:8px}
+  .card h2::before{content:"";width:3px;height:10px;background:var(--accent);
+    flex:none;opacity:.85}
+  .card p.lede{color:var(--faint);font-size:11.5px;margin:0 0 13px;line-height:1.6}
+
+  /* Top-aligned, not centred. Several of these labels carry a paragraph of
+     explanation, and centring floated the input halfway down it -- the
+     control and the thing it is labelled by stopped sharing a line. */
+  .field{display:grid;grid-template-columns:210px 1fr;gap:12px;align-items:start;
+    padding:9px 0;border-bottom:1px solid var(--line)}
+  .field:last-of-type{border-bottom:0}
+  .field label{font-size:12.5px;color:var(--dim);padding-top:7px}
+  .field label small{display:block;color:var(--faint);font-size:11px;line-height:1.5;
+    margin-top:2px}
+  @media(max-width:620px){.field{grid-template-columns:1fr;gap:4px}}
+
+  /* The value you are setting, in the face it will be read back in. */
+  input,select{background:var(--panel2);color:var(--text);border:1px solid var(--line);
+    border-radius:2px;padding:7px 9px;font:12.5px/1.4 var(--mono);width:100%;
+    font-variant-numeric:tabular-nums;transition:border-color .15s}
+  input:focus,select:focus{outline:none;border-color:var(--accent)}
+  input[type=checkbox]{width:auto}
+  .pair{display:flex;gap:8px;align-items:center}
+  .pair span{color:var(--faint);font-size:12px;white-space:nowrap}
+
+  button{background:var(--panel2);color:var(--text);border:1px solid var(--line);
+    border-radius:2px;padding:6px 12px;font:12px/1.4 var(--mono);cursor:pointer;
+    transition:border-color .15s,color .15s,background .15s}
+  button:hover{border-color:var(--edge);color:#fff}
+  button.pri{background:var(--accent2);border-color:var(--accent);color:var(--accent);font-weight:600}
+  button.pri:hover{background:var(--accent);color:#08191c}
+  button:disabled{opacity:.45;cursor:default}
+  .actions{display:flex;gap:8px;align-items:center;margin-top:13px;flex-wrap:wrap}
+
+  .err{color:var(--bad);font:11.5px/1.5 var(--mono);margin-top:4px}
+  .saved{color:var(--ok);font:12px/1.4 var(--mono)}
+  .msg{border-radius:2px;padding:10px 12px;font-size:12.5px;border:1px solid var(--line);
+    border-left:3px solid var(--edge);background:var(--panel2);margin-bottom:12px;
+    animation:settle .3s ease-out}
+  .msg.bad{border-color:#a5502a;border-left-color:var(--bad);background:#241510}
+  .msg.warn{border-color:#8a6d1f;border-left-color:var(--warn);background:#221d10}
+  .broke{border:1px solid #a5502a;border-left:3px solid var(--bad);background:#241510;
+    border-radius:2px;padding:10px 12px;font-size:12.5px}
+  @keyframes settle{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+
+  table.list{width:100%;border-collapse:collapse;font-size:12.5px;font-family:var(--mono)}
+  table.list th{text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.12em;
+    color:var(--faint);font-weight:600;padding:0 8px 7px 0}
+  table.list td{padding:7px 8px 7px 0;border-top:1px solid var(--line);vertical-align:top}
+  table.list td small{color:var(--faint);display:block;font-size:11px;font-family:var(--sans);
+    line-height:1.5;margin-top:2px}
+  .tag{display:inline-block;padding:1px 7px;border-radius:2px;font:600 9.5px/1.6 var(--mono);
+    text-transform:uppercase;letter-spacing:.08em;
+    border:1px solid var(--line);color:var(--dim)}
+  .tag.on{border-color:var(--ok);color:var(--ok)}
+  .tag.off{border-color:var(--faint);color:var(--faint)}
+  .tag.no{border-color:var(--warn);color:var(--warn)}
+
+  .note{font-size:11.5px;color:var(--faint);margin-top:11px;line-height:1.6}
+  .note code{font-family:var(--mono);font-size:11px;background:var(--panel2);
+    padding:1px 5px;border-radius:2px;color:var(--dim)}
+  /* The legal surface, in the reading face and not shrunk to small print. */
+  footer{margin-top:18px;font-size:11.5px;color:var(--dim);line-height:1.65}
+  footer a{color:var(--accent)}
+
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;
+      transition-duration:.01ms!important}
+  }
+</style>
+</head>
+<body>
+<!-- The same status line the dashboard carries, so the two pages read as one
+     instrument. It is also the only route back: this page is reached from the
+     dashboard and, without it, closing the tab was the way out. -->
+<header class="bar">
+  <h1>Airo<span>settings</span></h1>
+  <span class="spacer"></span>
+  <a class="key" href="/dashboard.html"><kbd>d</kbd>dashboard</a>
+</header>
+
+<div class="wrap">
+  <div class="sub" id="where">Loading…</div>
+
+  <div id="banner"></div>
+
+  <div class="card" id="p-location"></div>
+  <div class="card" id="p-sources"></div>
+  <div class="card" id="p-keys"></div>
+  <div class="card" id="p-alerts"></div>
+  <div class="card" id="p-data"></div>
+  <div class="card" id="p-backup"></div>
+
+  <footer id="foot"></footer>
+</div>
+
+<script>
+// The server substitutes this when it serves the page. It is not fetchable:
+// an endpoint handing the token to any caller would undo the point of having
+// one, since a cross-origin page can issue the request even though it cannot
+// read an ordinary response.
+const TOKEN = "__AIRO_TOKEN__";
+
+let SETTINGS = null;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+// Every panel renders inside its own try/catch. One panel throwing must not
+// take the page down with it -- a settings page that goes blank leaves the
+// user with no way to fix the setting that broke it. ARCHITECTURE 3.3.
+function panel(id, render){
+  try{
+    render();
+  }catch(e){
+    const el = $(id);
+    if (el) el.innerHTML =
+      '<div class="broke"><b>This section could not be drawn.</b><br>' + esc(e.message) +
+      '<br><span class="note">The other sections are unaffected. Reload to try again.</span></div>';
+  }
+}
+
+function banner(kind, html){
+  $('banner').innerHTML = html ? '<div class="msg ' + kind + '">' + html + '</div>' : '';
+}
+
+async function load(){
+  const r = await fetch('/api/settings', {headers:{'Accept':'application/json'}});
+  if (!r.ok) throw new Error('the local server answered ' + r.status);
+  SETTINGS = await r.json();
+  draw();
+}
+
+/* What a 403 actually means here. The token lives only in the running server,
+   so a restart invalidates the one this page was handed; calling that
+   "forbidden" sends someone hunting for a permissions problem that does not
+   exist. Named once because it is shown twice — in the banner, and as the
+   `error` a caller may print beside its own control. */
+const STALE_TOKEN = 'Airo restarted since this page was opened.';
+
+/* Every write this page makes, through one function.
+
+   There were eight. This helper existed and two call sites used it; the other
+   six each hand-rolled the same forty lines — fetch, the token header, a
+   catch for the unreachable server, a branch for 403, a branch for a non-2xx
+   body — and the wording had drifted apart across them. One said "Could not
+   reach Airo.", another "Could not reach Airo — is it still running?", a
+   third "Could not reach Airo to open a folder chooser."; two of the six had
+   no 403 branch at all, so a page left open across a restart reported the
+   server's raw refusal on those two paths and a clear "reload me" on the
+   rest. Eight copies of an error path is eight places for one of them to be
+   missing, and two of them were.
+
+   `opts`, all optional:
+     status   an element to report progress and failure into
+     working  what to put in it while the request is in flight
+     undone   what a stale token cost, appended to the reload banner. This is
+              the one part that legitimately varies — "Your key was not saved"
+              and "Nothing was changed" are different facts — so it is a
+              parameter rather than a copy of the sentence around it.
+     fields   route a per-field error map to the fields; otherwise the first
+              message is shown in `status`, which is what a panel with no
+              field markup needs
+     silent   return the failure without reporting it, for a caller that
+              renders errors into its own result area
+
+   Returns {ok, status, body, error} always — never throws. The reason it
+   returns `ok` rather than a bare body is the bug this shape was written for:
+   `/api/keys` was called with its result dropped on the floor. */
+async function postJSON(path, body, opts){
+  const o = opts || {};
+  const status = o.status || null;
+  const report = (message, kind) => {
+    if (o.silent) return;
+    if (status){ status.textContent = message; status.className = 'err'; }
+    else banner(kind || 'bad', esc(message));
+  };
+  if (status){ status.textContent = o.working || 'Working…'; status.className = ''; }
+
+  let r;
+  try{
+    /* Every mutating request carries the per-process token the server
+       substituted into this page. */
+    r = await fetch(path, {
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-Airo-Token':TOKEN},
+      body: JSON.stringify(body)
+    });
+  }catch(e){
+    const error = 'Could not reach Airo — is it still running?';
+    report(error);
+    return {ok:false, status:0, body:{}, error};
+  }
+
+  if (r.status === 403){
+    // Always a banner, never the status line: it is about the page rather
+    // than about the field, and it is the same fact whichever panel hit it.
+    if (status) status.textContent = '';
+    banner('warn', '<b>' + STALE_TOKEN + '</b> ' +
+      (o.undone || 'Nothing was changed.') +
+      ' <a href="" onclick="location.reload();return false;">' +
+      'Reload the page</a> and try again.');
+    // The same sentence as the `error` a caller may render beside its own
+    // control. One string, so the banner and the inline note cannot come to
+    // describe one event two ways -- which is what six copies of this branch
+    // had already achieved.
+    return {ok:false, status:403, body:{}, error: STALE_TOKEN};
+  }
+
+  const payload = await r.json().catch(() => ({}));
+  if (status) status.textContent = '';
+  if (!r.ok){
+    const firstField = payload.errors && Object.values(payload.errors)[0];
+    const error = payload.error || firstField ||
+                  ('the server answered ' + r.status);
+    if (o.fields && payload.errors) showFieldErrors(payload.errors);
+    else report(error);
+    return {ok:false, status:r.status, body:payload, error};
+  }
+  return {ok:true, status:r.status, body:payload, error:null};
+}
+
+
+// One save per panel, sending only what that panel owns. Sending the whole
+// config back would let a tab left open overnight revert everything changed
+// elsewhere since it loaded.
+async function save(patch, statusEl){
+  const r = await postJSON('/api/settings', patch,
+                           {status: statusEl, working: 'Saving…', fields: true});
+  if (!r.ok) return false;
+
+  SETTINGS = r.body;
+  statusEl.textContent = 'Saved';
+  statusEl.className = 'saved';
+  setTimeout(() => { if (statusEl.textContent === 'Saved') statusEl.textContent = ''; }, 4000);
+  return true;
+}
+
+function showFieldErrors(errors){
+  document.querySelectorAll('.err[data-field]').forEach(e => e.textContent = '');
+  for (const [field, message] of Object.entries(errors)){
+    const el = document.querySelector('.err[data-field="' + CSS.escape(field) + '"]');
+    if (el) el.textContent = message;
+    else banner('bad', esc(message));
+  }
+}
+
+function field(label, hint, control, errField){
+  return '<div class="field"><label>' + esc(label) +
+    (hint ? '<small>' + hint + '</small>' : '') + '</label><div>' + control +
+    '<div class="err" data-field="' + esc(errField || '') + '"></div></div></div>';
+}
+
+function options(list, selected){
+  return list.map(o => {
+    const value = typeof o === 'string' ? o : o.name;
+    const text  = typeof o === 'string' ? o : o.label;
+    return '<option value="' + esc(value) + '"' +
+      (value === selected ? ' selected' : '') + '>' + esc(text) + '</option>';
+  }).join('');
+}
+
+function draw(){
+  const s = SETTINGS;
+  $('where').innerHTML = 'Settings live in <code>' + esc(s.config_path) + '</code>. ' +
+    'Changes to polling and alerts take effect on the next scheduled poll; ' +
+    'display changes are immediate.';
+
+  panel('p-location', drawLocation);
+  panel('p-sources',  drawSources);
+  panel('p-keys',     drawKeys);
+  panel('p-alerts',   drawAlerts);
+  panel('p-data',     drawData);
+  panel('p-backup',   drawBackup);
+  panel('foot',       drawFooter);
+}
+
+/* ------------------------------------------------------------- location */
+/* Where you are — asked as an address, because nobody knows their latitude.
+
+   This panel used to open with two empty number fields. That is the tool
+   asking the user to do its job: a person knows their street, not
+   -33.5000/151.0000, and a wrong digit silently ranks every source by
+   distance from the wrong place.
+
+   Coordinates are still shown and still editable. They are the thing actually
+   stored and used, so hiding them would make a wrong lookup impossible to
+   correct, and someone who does know their coordinates should not be forced
+   through a third-party service to enter them. */
+function drawLocation(){
+  const s = SETTINGS, loc = s.location || {};
+  const known = loc.latitude != null && loc.longitude != null;
+  $('p-location').innerHTML =
+    '<h2>Location and display</h2>' +
+    '<p class="lede">Where you are, and how the number is shown. Your location is used to ' +
+    'rank sources by distance and never leaves your machine except to the provider that ' +
+    'needs it to answer.</p>' +
+
+    field('Your address',
+          'A street address, suburb or postcode &mdash; whatever you know. ' +
+          'Looking it up sends what you type to OpenStreetMap; nothing else is sent. ' +
+          'Include your state or country: a bare postcode matches several countries.',
+          '<div class="pair"><input id="l-find" placeholder="e.g. 12 Example St, Your Suburb" ' +
+          'autocomplete="off"><button id="l-go">Find</button></div>' +
+          '<span id="l-find-status"></span><div id="l-matches"></div>', 'location.query') +
+
+    field('Name', 'Shown in the tray and the dashboard title.',
+          '<input id="l-name" value="' + esc(loc.name) + '">', 'location.name') +
+
+    // Kept visible rather than tucked away: these are what is stored, and a
+    // lookup that lands on the wrong suburb has to be correctable.
+    field('Latitude', known ? '' : 'Filled in when you pick an address above.',
+          '<input id="l-lat" value="' + esc(loc.latitude) + '">', 'location.latitude') +
+    field('Longitude', '', '<input id="l-lon" value="' + esc(loc.longitude) + '">',
+          'location.longitude') +
+
+    // Quiet hours and the evening window are read in this zone. Left empty
+    // they follow whatever zone this *computer* is in, which on a NAS or a
+    // Raspberry Pi is usually UTC — and a 22:00–07:00 quiet window kept
+    // against UTC in Brisbane silences the middle of the day and notifies at
+    // 3am. Shown with what is actually in force, because the configured name
+    // alone cannot say whether it took.
+    field('Timezone', tzHelp(s.timezone),
+          '<div class="pair"><input id="l-tz" placeholder="e.g. Australia/Brisbane" ' +
+          'value="' + esc((s.timezone || {}).configured || '') + '">' +
+          '<button id="l-tz-go">Detect</button></div>' +
+          '<span id="l-tz-status"></span>', 'location.timezone') +
+
+    field('Scale', 'Raw micrograms are always what gets stored. This only changes how it ' +
+          'is shown &mdash; the same air gives very different index numbers on different ' +
+          'national scales.',
+          '<select id="l-scale">' + options(s.choices.aqi_scales, s.aqi_scale) + '</select>',
+          'aqi_scale') +
+    field('When sources disagree', 'Which reading becomes the headline. <b>nearest</b> is ' +
+          'the default because the tool describes <i>local</i> air.',
+          '<select id="l-rule">' + options(s.choices.fusion_rules, s.fusion.rule) +
+          '</select>', 'fusion.rule') +
+    '<div class="actions"><button class="pri" id="l-save">Save</button>' +
+    '<span id="l-status"></span></div>';
+
+  $('l-go').onclick = lookUpAddress;
+  // Enter in the address box means "find", not "submit the form" — the field
+  // sits above Save, and a stray Enter there previously saved empty
+  // coordinates over good ones.
+  $('l-find').onkeydown = e => {
+    if (e.key === 'Enter'){ e.preventDefault(); lookUpAddress(); }
+  };
+
+  $('l-tz-go').onclick = detectTimezone;
+
+  $('l-save').onclick = () => save({
+    location: {
+      name: $('l-name').value,
+      latitude: numberOrNull($('l-lat').value),
+      longitude: numberOrNull($('l-lon').value),
+      timezone: $('l-tz').value.trim()
+    },
+    aqi_scale: $('l-scale').value,
+    fusion: {rule: $('l-rule').value}
+  }, $('l-status'));
+}
+
+/* What to say under the timezone box.
+
+   Three states worth distinguishing, because "configured" and "working" are
+   not the same claim and a page that shows only the first is lying by
+   omission on any machine that cannot apply it. */
+function tzHelp(tz){
+  tz = tz || {};
+  const machine = tz.machine ? (' This computer is on <b>' + esc(tz.machine) +
+                               '</b>.') : '';
+  if (!tz.database_available){
+    return 'This computer has no timezone database, so a name here cannot be ' +
+      'applied &mdash; expected on Windows, where Python ships none and the ' +
+      'package that supplies one would be a dependency Airo does not take. ' +
+      'Times follow this computer\'s clock.' + machine +
+      ' If that is where you live, nothing is wrong.';
+  }
+  if (!tz.configured){
+    return 'Not set, so quiet hours and the evening window follow this ' +
+      'computer\'s clock.' + machine + ' Set it if Airo runs somewhere else ' +
+      '&mdash; a server or a Pi is often left on UTC.';
+  }
+  if (!tz.in_force){
+    return '<b>Not in force.</b> Airo could not resolve that name, so times ' +
+      'follow this computer\'s clock instead.' + machine;
+  }
+  return 'Quiet hours and the evening window are read in this zone.' + machine;
+}
+
+/* Fill the timezone in from the coordinates above.
+
+   A button rather than something Save does silently: the lookup is an
+   outbound call, and somebody who typed their coordinates by hand may have
+   done exactly that to avoid one. Offered, not applied — Save is still the
+   thing that changes the configuration. */
+async function detectTimezone(){
+  const status = $('l-tz-status');
+  const lat = numberOrNull($('l-lat').value);
+  const lon = numberOrNull($('l-lon').value);
+  if (lat === null || lon === null){
+    status.textContent = 'Find your address first — a timezone is looked up ' +
+      'from coordinates.';
+    status.className = 'err';
+    return;
+  }
+  const r = await postJSON('/api/timezone',
+                           {location: {latitude: lat, longitude: lon}},
+                           {status, working: 'Looking up…',
+                            undone: 'The timezone was not looked up.'});
+  if (!r.ok) return;
+  $('l-tz').value = r.body.timezone || '';
+  status.textContent = 'Found ' + (r.body.timezone || '') + ' — press Save to keep it.';
+  status.className = '';
+}
+
+/* Ask the server to turn the typed address into candidates.
+
+   The lookup runs server-side, not from this page: it keeps the one
+   normalising implementation in Python where the wizard shares it, and it
+   means the page never talks to a third party directly. */
+async function lookUpAddress(){
+  const status = $('l-find-status');
+  const query = $('l-find').value.trim();
+  if (!query){ status.textContent = 'Type an address first.'; status.className = 'err'; return; }
+  $('l-matches').innerHTML = '';
+
+  // No `fields`: there is no per-field error slot beside the search box, so a
+  // rejected query belongs in the status line under it rather than in a
+  // banner at the top of a page the user is not looking at.
+  const r = await postJSON('/api/geocode', {query: query},
+                           {status, working: 'Looking up…',
+                            undone: 'Nothing was looked up.'});
+  if (!r.ok) return;
+
+  const matches = r.body.matches || [];
+  if (!matches.length){
+    status.textContent = 'No match. Try adding your suburb and state, or type ' +
+      'coordinates below.';
+    status.className = 'err';
+    return;
+  }
+  status.textContent = '';
+  renderMatches(matches);
+}
+
+/* One row per candidate, showing the FULL label.
+
+   The full label is what makes an ambiguous query safe to answer: "9109"
+   matches a place in Norway, one in Tunisia and one in South Africa, and the
+   short name alone gives the user no way to tell which is theirs. */
+function renderMatches(matches){
+  $('l-matches').innerHTML =
+    '<table class="list"><tbody>' +
+    matches.map((m, i) =>
+      '<tr><td>' + esc(m.label) +
+      '<small>' + Number(m.latitude).toFixed(4) + ', ' +
+      Number(m.longitude).toFixed(4) + '</small></td>' +
+      '<td style="white-space:nowrap"><button data-pick="' + i + '">Use this</button></td>' +
+      '</tr>').join('') +
+    '</tbody></table>';
+
+  $('l-matches').querySelectorAll('[data-pick]').forEach(b => {
+    b.onclick = () => {
+      const m = matches[Number(b.dataset.pick)];
+      // Filled in, not saved. The user still presses Save — picking a wrong
+      // row should not immediately rewrite the location every source is
+      // ranked against.
+      $('l-lat').value = m.latitude;
+      $('l-lon').value = m.longitude;
+      if (!$('l-name').value.trim()) $('l-name').value = m.name;
+      $('l-matches').innerHTML = '';
+      $('l-find-status').textContent =
+        'Filled in from ' + m.label + ' — press Save, then search for monitors below.';
+      $('l-find-status').className = 'saved';
+    };
+  });
+}
+
+function numberOrNull(v){
+  v = String(v).trim();
+  if (v === '' || v === 'null') return null;
+  const n = Number(v);
+  return Number.isNaN(n) ? v : n;   // send it through; the server explains why not
+}
+
+/* -------------------------------------------------------------- sources */
+let FOUND = null;   // last search result, kept so a redraw does not re-search
+
+function drawSources(){
+  const s = SETTINGS;
+  const rows = (s.sources || []).map((src, i) =>
+    '<tr><td><b>' + esc(src.site_name || src.site_id) + '</b>' +
+    '<small>' + esc(src.label) + ' &middot; ' + esc(src.site_id) +
+    (src.tier ? ' &middot; ' + esc(src.tier) : '') +
+    (src.accuracy_note ? '<br>' + esc(src.accuracy_note) : '') + '</small></td>' +
+    '<td>' +
+    (src.known_provider === false ? '<span class="tag no">unknown network</span> ' : '') +
+    (src.needs_key && !src.has_key ? '<span class="tag no">no key</span> ' : '') +
+    '</td>' +
+    '<td style="white-space:nowrap">' +
+    '<label><input type="checkbox" data-src="' + i + '"' +
+    (src.enabled ? ' checked' : '') + '> on</label> ' +
+    '<button data-remove="' + i + '">Remove</button></td></tr>').join('');
+
+  const unused = (s.networks || []).filter(n => !n.in_use);
+
+  $('p-sources').innerHTML =
+    '<h2>Sources</h2>' +
+    '<p class="lede">The instruments Airo reads. Turning one off, or removing it, stops it ' +
+    'being polled and <b>keeps every reading it has already produced</b> &mdash; that ' +
+    'history is in the database, not in this list.</p>' +
+    (rows ? '<table class="list"><tr><th>Site</th><th></th><th></th></tr>' + rows + '</table>'
+          : '<div class="msg">No sources configured yet. Search below.</div>') +
+    '<div class="actions"><button class="pri" id="s-save">Save changes</button>' +
+    '<span id="s-status"></span></div>' +
+    '<div class="err" data-field="sources"></div>' +
+
+    '<h2 style="margin-top:18px">Find monitors near you</h2>' +
+    '<p class="lede">Airo checks which of the nearest stations are actually publishing ' +
+    'PM2.5 before suggesting any. Distance alone once picked the nearest station, which ' +
+    'reports nothing, and the first poll returned "every source failed".</p>' +
+    '<div class="pair"><span>Within</span>' +
+    '<input id="s-radius" value="25" style="width:80px"><span>km of ' +
+    esc((s.location || {}).name || 'your location') + '</span>' +
+    '<button id="s-find">Search</button><span id="s-find-status"></span></div>' +
+    '<div id="s-results"></div>' +
+
+    '<h2 style="margin-top:18px">Add a sensor you own</h2>' +
+    '<p class="lede">Any sensor, by its id &mdash; including a <b>private</b> one, ' +
+    'which the search above cannot see. On PurpleAir the id is the number in the URL ' +
+    'when you open your sensor, and the read key is under <i>My Sensors &rarr; Edit</i>. ' +
+    'Airo reads the sensor once before adding it, so a mistyped id fails here rather ' +
+    'than as silence tomorrow. It then fetches ' + esc(String(s.backfill_days_on_first_run || 7)) +
+    ' day(s) of history for it, which is what the inside/outside comparison needs ' +
+    'before it will say anything &mdash; raise it above if you want longer.</p>' +
+    '<div class="pair"><span>Network</span>' +
+    '<select id="s-own-net">' + options(s.choices.providers || [], 'purpleair') + '</select>' +
+    '<span>Sensor id</span><input id="s-own-id" style="width:120px">' +
+    '<span>Read key</span><input id="s-own-key" style="width:150px" ' +
+    'placeholder="only if private">' +
+    '<button id="s-own-check">Check</button></div>' +
+    '<div id="s-own-result"></div>' +
+
+    (unused.length ? '<div class="note"><b>Networks you are not using:</b> ' +
+      unused.map(n => esc(n.label) +
+        (n.has_key ? '' : (n.signup_url
+          ? ' — <a href="' + esc(n.signup_url) + '">free account</a>'
+          : ' (needs an account)'))).join(' &middot; ') + '</div>' : '');
+
+  const ownCheck = $('s-own-check');
+  if (ownCheck) ownCheck.onclick = async () => {
+    const out = $('s-own-result');
+    const provider = $('s-own-net').value;
+    const site_id = $('s-own-id').value.trim();
+    const read_key = $('s-own-key').value.trim();
+    if (!site_id) { out.innerHTML = '<div class="err">Enter a sensor id.</div>'; return; }
+    out.innerHTML = '<div class="msg">Reading the sensor…</div>';
+
+    // `silent`: this panel has its own result area, and a transport failure
+    // belongs beside the sensor being probed rather than in the page banner.
+    const reply = await postJSON('/api/sources/probe',
+                                 {provider, site_id, read_key},
+                                 {silent: true, undone: 'Nothing was added.'});
+    if (!reply.ok) {
+      out.innerHTML = '<div class="err">' + esc(reply.error) + '</div>';
+      return;
+    }
+    // Two different failures: the request succeeded and the *sensor* could
+    // not be read. The server says so in the body, and it is the answer the
+    // user came for.
+    const found = reply.body;
+    if (!found || !found.ok) {
+      out.innerHTML = '<div class="err">' + esc((found && found.error) ||
+                      'could not read that sensor') + '</div>';
+      return;
+    }
+
+    // What it is, before anybody commits to it — and in particular *where* it
+    // is, because that decides whether it can speak for the air outside.
+    out.innerHTML =
+      '<div class="msg"><b>' + esc(found.site_name) + '</b> &middot; ' +
+      esc(found.placement) +
+      (found.pm25 != null ? ' &middot; ' + Number(found.pm25).toFixed(1) + ' µg/m³' : '') +
+      '<br><small>' + esc(found.placement_note) + '</small></div>' +
+      '<div class="actions"><button class="pri" id="s-own-add">Add this sensor</button></div>';
+
+    $('s-own-add').onclick = async () => {
+      const sources = (SETTINGS.sources || []).map(src => ({
+        provider: src.provider, site_id: src.site_id, site_name: src.site_name,
+        latitude: src.latitude, longitude: src.longitude,
+        enabled: src.enabled !== false, placement: src.placement}));
+      if (sources.some(x => x.provider === found.provider &&
+                            String(x.site_id) === String(found.site_id))) {
+        out.innerHTML = '<div class="err">That sensor is already configured.</div>';
+        return;
+      }
+      sources.push({provider: found.provider, site_id: found.site_id,
+                    site_name: found.site_name, latitude: found.latitude,
+                    longitude: found.longitude, enabled: true,
+                    placement: found.placement});
+      const saved = await save({sources}, $('s-status'));
+      if (!saved) return;
+      /* The key goes separately, through the one route that stores one — and
+         the answer is read.
+
+         It was not. The POST was awaited, its result dropped, and the page
+         reloaded unconditionally. So a rejected key — a stale token, a
+         directory that could not be written, a server that had gone away
+         between the two requests — took its error message with it into the
+         reload, and the user was left with the sensor configured, added to
+         their sources, and permanently unreadable: a private sensor needs its
+         read key and there was nothing on screen saying the key had not been
+         stored. The sensor then simply reported nothing, which reads as a
+         broken sensor rather than as a missing key.
+
+         So: no reload on failure. The message has to survive long enough to
+         be read, and the sensor is already saved, so there is something
+         concrete to tell the user to do. */
+      if (read_key) {
+        const keyed = await postJSON('/api/keys', {provider, site_id, key: read_key},
+                                     {silent: true,
+                                      undone: 'Your key was not saved.'});
+        if (!keyed.ok) {
+          out.innerHTML = '<div class="err"><b>The sensor was added, but its read ' +
+            'key could not be saved.</b> ' + esc(keyed.error) + '<br>Add the key ' +
+            'again from the Keys panel below — without it this sensor cannot be ' +
+            'read, and it will report nothing.</div>';
+          return;
+        }
+      }
+      location.reload();
+    };
+  };
+
+  $('s-save').onclick = () => {
+    const sources = (SETTINGS.sources || []).map((src, i) => ({
+      provider: src.provider, site_id: src.site_id, site_name: src.site_name,
+      latitude: src.latitude, longitude: src.longitude,
+      enabled: document.querySelector('[data-src="' + i + '"]').checked
+    })).filter((_, i) => !REMOVED.has(i));
+    save({sources: sources}, $('s-status')).then(okay => { if (okay){ REMOVED.clear(); draw(); } });
+  };
+
+  document.querySelectorAll('[data-remove]').forEach(b => {
+    b.onclick = () => {
+      REMOVED.add(Number(b.dataset.remove));
+      b.closest('tr').style.opacity = .35;
+      b.textContent = 'removed on save';
+      b.disabled = true;
+    };
+  });
+
+  $('s-find').onclick = findSites;
+  if (FOUND) renderFound();
+}
+
+// Sites the user has taken off the list this session. Kept so a removed
+// source does not reappear as "Add" the moment discovery runs again -- the
+// list comes from the provider, which has no idea what was just rejected.
+const REMOVED = new Set();
+
+/* Ask the server what is near the configured location.
+   Discovery is a server job, not a browser one: it needs the account keys, and
+   a key must never reach this page. It also probes each candidate to see
+   whether it is actually publishing PM2.5 right now, which is the difference
+   between a monitor that exists and one worth adding -- a decommissioned
+   station stays in a provider's index long after it stops reporting. */
+async function findSites(){
+  const status = $('s-find-status');
+  const r = await postJSON('/api/sources/discover',
+                           {radius_km: Number($('s-radius').value) || 25},
+                           {status, working: 'Searching…',
+                            undone: 'Nothing was searched for.'});
+  if (!r.ok) return;
+  FOUND = r.body;
+  renderFound();
+}
+
+/* Show what discovery found: nearest first, each marked with whether it is
+   reporting, and whether Airo suggests it.
+
+   "suggested" comes from the server's recommend(), which pairs the nearest
+   reference monitor with the nearest consumer sensor rather than taking the
+   two closest. Two instruments of the same kind agree with each other and
+   still miss the same things; one of each is what makes disagreement
+   informative. That judgement stays in Python -- this only renders its verdict. */
+// How many candidates to show before the user asks for more. A search near a
+// city returns 40+ sites; a list that long is a list nobody reads, and the
+// answer is almost always in the first few. Everything found is still
+// reachable behind "show all" -- truncating silently would be the same as
+// dropping them.
+const SHOW_FIRST = 5;
+let SHOW_ALL = false;
+
+function renderFound(){
+  const b = FOUND;
+  const have = new Set((SETTINGS.sources || [])
+    .map(s => s.provider + '/' + s.site_id));
+
+  // Nearest first, and anything Airo suggests lifted to the top regardless of
+  // distance -- the suggestion pairs a reference monitor with a consumer
+  // sensor, so the second of the pair can be further away than several sites
+  // that are less useful.
+  const all = (b.sites || []).slice().sort((x, y) => {
+    if (!!x.recommended !== !!y.recommended) return x.recommended ? -1 : 1;
+    return (x.distance_km ?? 1e9) - (y.distance_km ?? 1e9);
+  });
+  const shown = SHOW_ALL ? all : all.slice(0, SHOW_FIRST);
+
+  const rows = shown.map(site => {
+    const id = site.provider + '/' + site.site_id;
+    const state = site.reporting === false
+      ? '<span class="tag no">no PM2.5 right now</span>'
+      : (site.reporting === true ? '<span class="tag on">reporting</span>'
+                                 : '<span class="tag off">not checked</span>');
+    return '<tr><td><b>' + esc(site.site_name || site.site_id) + '</b>' +
+      '<small>' + esc(site.provider) +
+      (site.distance_km != null ? ' &middot; ' + Number(site.distance_km).toFixed(1) + ' km' : '') +
+      '</small></td><td>' + state +
+      (site.recommended ? ' <span class="tag on">suggested</span>' : '') + '</td>' +
+      '<td>' + (have.has(id)
+        ? '<span class="tag off">already added</span>'
+        : '<button data-add="' + esc(id) + '">Add</button>') + '</td></tr>';
+  }).join('');
+
+  const failed = Object.entries(b.failures || {});
+  const more = all.length - shown.length;
+
+  $('s-results').innerHTML =
+    (failed.length ? '<div class="msg warn"><b>Some networks could not be searched.</b> ' +
+      'The list below is therefore incomplete rather than empty:<br>' +
+      failed.map(([k, v]) => esc(k) + ' — ' + esc(v)).join('<br>') + '</div>' : '') +
+    (rows ? '<table class="list"><tr><th>Site</th><th>State</th><th></th></tr>' + rows +
+            '</table>' +
+            (more > 0
+              ? '<div class="actions"><button id="s-more">Show all ' +
+                esc(all.length) + ' monitors</button></div>'
+              : '') +
+            '<div class="note">Showing the nearest ' + esc(shown.length) + ' of ' +
+            esc(all.length) + '. Two sources are better than one &mdash; a number ' +
+            'no second instrument can confirm is a number worth doubting.<br>' +
+            'Checked the nearest ' + esc(b.probed) + ' of ' +
+            esc((b.sites || []).length) + ' found' +
+            (b.not_reporting ? '; ' + esc(b.not_reporting) + ' publish no PM2.5 right now'
+                             : '') + '. Sites beyond the nearest ' + esc(b.probe_limit) +
+            ' are listed unchecked rather than silently dropped.</div>'
+          : '<div class="msg">Nothing found within ' + esc(b.radius_km) + ' km.</div>');
+
+  const moreBtn = $('s-more');
+  if (moreBtn) moreBtn.onclick = () => { SHOW_ALL = true; renderFound(); };
+
+  document.querySelectorAll('[data-add]').forEach(btn => {
+    btn.onclick = () => {
+      const [provider, ...rest] = btn.dataset.add.split('/');
+      const siteId = rest.join('/');
+      const site = (FOUND.sites || []).find(
+        s => s.provider === provider && String(s.site_id) === siteId);
+      if (!site) return;
+      const sources = (SETTINGS.sources || []).map(s => ({
+        provider: s.provider, site_id: s.site_id, site_name: s.site_name,
+        latitude: s.latitude, longitude: s.longitude, enabled: s.enabled
+      }));
+      sources.push({provider: provider, site_id: String(site.site_id),
+                    site_name: site.site_name, latitude: site.latitude,
+                    longitude: site.longitude, enabled: true});
+      save({sources: sources}, $('s-find-status')).then(okay => { if (okay) draw(); });
+    };
+  });
+}
+
+/* ----------------------------------------------------------------- keys */
+function drawKeys(){
+  const s = SETTINGS;
+  const keyed = (s.networks || []).filter(n => n.needs_key);
+  const rows = keyed.map(n =>
+    '<tr><td><b>' + esc(n.label) + '</b><small>' +
+    (n.in_use ? 'in use' : 'not in use') +
+    (n.signup_url ? ' &middot; <a href="' + esc(n.signup_url) + '">free account</a>' : '') +
+    '</small></td>' +
+    '<td>' + (n.has_key ? '<span class="tag on">key set</span>'
+                        : '<span class="tag no">no key</span>') + '</td>' +
+    '<td><input type="password" data-key="' + esc(n.provider) +
+    '" placeholder="' + (n.has_key ? 'set — type to replace' : 'paste your key') +
+    '" autocomplete="off"></td>' +
+    '<td style="white-space:nowrap"><button data-setkey="' + esc(n.provider) +
+    '">Save</button>' + (n.has_key ? ' <button data-clearkey="' + esc(n.provider) +
+    '">Clear</button>' : '') + '</td></tr>').join('');
+
+  // A private PurpleAir sensor needs a per-sensor read key, which is the one
+  // credential that lives in config.json rather than beside the others.
+  const priv = (s.sources || []).filter(src => src.provider === 'purpleair');
+  const privRows = priv.map(src =>
+    '<tr><td><b>' + esc(src.site_name || src.site_id) + '</b><small>' +
+    esc(src.site_id) + '</small></td>' +
+    '<td>' + (src.has_read_key ? '<span class="tag on">read key set</span>'
+                               : '<span class="tag off">public sensor</span>') + '</td>' +
+    '<td><input type="password" data-readkey="' + esc(src.site_id) +
+    '" placeholder="only needed for a private sensor" autocomplete="off"></td>' +
+    '<td style="white-space:nowrap"><button data-setread="' + esc(src.site_id) +
+    '">Save</button>' + (src.has_read_key
+      ? ' <button data-clearread="' + esc(src.site_id) + '">Clear</button>' : '') +
+    '</td></tr>').join('');
+
+  $('p-keys').innerHTML =
+    '<h2>Account keys</h2>' +
+    '<p class="lede">Keys are written to a file in your home directory that only your ' +
+    'account can read &mdash; never into the settings file, and never shown again once ' +
+    'saved. Airo will tell you if it could not restrict the file rather than assume it ' +
+    'worked.</p>' +
+    (rows ? '<table class="list"><tr><th>Network</th><th></th><th>Key</th><th></th></tr>' +
+            rows + '</table>'
+          : '<div class="msg">None of your networks need an account.</div>') +
+    (privRows ? '<div class="note" style="margin-top:14px"><b>Private sensors.</b> A ' +
+      'PurpleAir sensor its owner has not made public needs its own read key, which is ' +
+      'stored with the source rather than with the account keys above.</div>' +
+      '<table class="list">' + privRows + '</table>' : '') +
+    '<div class="actions"><span id="k-status"></span></div>';
+
+  keyed.forEach(n => {
+    const set = document.querySelector('[data-setkey="' + CSS.escape(n.provider) + '"]');
+    if (set) set.onclick = () => sendKey({
+      provider: n.provider,
+      key: document.querySelector('[data-key="' + CSS.escape(n.provider) + '"]').value
+    });
+    const clear = document.querySelector('[data-clearkey="' + CSS.escape(n.provider) + '"]');
+    if (clear) clear.onclick = () => sendKey({provider: n.provider, key: ''});
+  });
+
+  priv.forEach(src => {
+    const id = CSS.escape(String(src.site_id));
+    const set = document.querySelector('[data-setread="' + id + '"]');
+    if (set) set.onclick = () => sendKey({
+      provider: 'purpleair', site_id: src.site_id,
+      key: document.querySelector('[data-readkey="' + id + '"]').value
+    });
+    const clear = document.querySelector('[data-clearread="' + id + '"]');
+    if (clear) clear.onclick = () => sendKey({provider: 'purpleair',
+                                              site_id: src.site_id, key: ''});
+  });
+}
+
+async function sendKey(payload){
+  const status = $('k-status');
+  const r = await postJSON('/api/keys', payload,
+                           {status, working: 'Saving…',
+                            undone: 'Your key was not saved.'});
+  if (!r.ok) return;
+  const body = r.body;
+  // restricted === false is a real answer worth showing. A key that merely
+  // looks protected is worse than one known not to be.
+  if (body.restricted === false){
+    banner('warn', '<b>Your key was saved, but its file could not be restricted to your ' +
+      'account.</b> Anyone able to log in as another user on this machine could read ' +
+      '<code>' + esc(body.path) + '</code>.');
+  } else {
+    banner('', '');
+  }
+  SETTINGS = body.settings || body;
+  status.textContent = 'Saved';
+  draw();
+}
+
+/* --------------------------------------------------------------- alerts */
+function drawAlerts(){
+  const a = SETTINGS.alerts || {};
+  const quiet = a.quiet_hours || [];
+  $('p-alerts').innerHTML =
+    '<h2>Alerts</h2>' +
+    '<p class="lede">A notification when air quality worsens. The values below are the ones ' +
+    'actually in force, including any Airo is defaulting to.</p>' +
+    field('Notify me', '', '<input type="checkbox" id="a-on"' +
+          (a.enabled ? ' checked' : '') + '>', 'alerts.enabled') +
+    field('Alert above (µg/m³)',
+          'A raw threshold means the same thing whichever scale you display — the dashboard ' +
+          'legend shows where your scale\'s own bands fall.',
+          '<input id="a-pm" value="' + esc(a.threshold_pm25 == null ? '' : a.threshold_pm25) +
+          '" placeholder="leave empty to use the index threshold below">',
+          'alerts.threshold_pm25') +
+    field('…or above (index)', 'Used only when no µg/m³ threshold is set.',
+          '<input id="a-aqi" value="' + esc(a.threshold_aqi) + '">', 'alerts.threshold_aqi') +
+    field('Quiet hours', 'Notifications are suppressed; readings are still collected. ' +
+          'A window like 22 to 7 crosses midnight and is handled.',
+          '<div class="pair"><input id="a-q1" value="' + esc(quiet[0] == null ? '' : quiet[0]) +
+          '"><span>until</span><input id="a-q2" value="' +
+          esc(quiet[1] == null ? '' : quiet[1]) + '"></div>', 'alerts.quiet_hours') +
+    field('Cooldown (minutes)', 'Stops repeat alerts while conditions hover at the threshold.',
+          '<input id="a-cool" value="' + esc(a.cooldown_minutes) + '">',
+          'alerts.cooldown_minutes') +
+    field('Tell me when it clears', '',
+          '<input type="checkbox" id="a-clear"' + (a.notify_when_clear ? ' checked' : '') +
+          '>', 'alerts.notify_when_clear') +
+    '<div class="actions"><button class="pri" id="a-save">Save</button>' +
+    '<span id="a-status"></span></div>';
+
+  $('a-save').onclick = () => {
+    const q1 = $('a-q1').value.trim(), q2 = $('a-q2').value.trim();
+    save({alerts: {
+      enabled: $('a-on').checked,
+      threshold_pm25: numberOrNull($('a-pm').value),
+      threshold_aqi: numberOrNull($('a-aqi').value),
+      quiet_hours: (q1 === '' && q2 === '') ? null : [numberOrNull(q1), numberOrNull(q2)],
+      cooldown_minutes: numberOrNull($('a-cool').value),
+      notify_when_clear: $('a-clear').checked
+    }}, $('a-status'));
+  };
+}
+
+/* ----------------------------------------------------------------- data */
+function drawData(){
+  const s = SETTINGS, d = s.data || {};
+  const orphans = d.other_databases || [];
+  $('p-data').innerHTML =
+    '<h2>Data</h2>' +
+    '<p class="lede">Where readings are kept and for how long. This record cannot be ' +
+    'regenerated, so the default is to keep everything.</p>' +
+    (orphans.length ? '<div class="msg warn"><b>Another database exists outside the ' +
+      'directory in use.</b> Pointing the data directory somewhere new starts a fresh ' +
+      'database and leaves the old one behind, still full:<br>' +
+      orphans.map(o => '<code>' + esc(o.path) + '</code> — ' +
+        esc(o.rows) + ' rows').join('<br>') + '</div>' : '') +
+    field('In use now', '',
+          '<div><code>' + esc(d.database) + '</code><br><span class="note">' +
+          (d.database_exists ? (Math.round(d.database_bytes / 1024) + ' KB') : 'not created yet') +
+          '</span></div>', '') +
+    field('Store readings in', 'Leave empty for the default. The path is checked for ' +
+          'writability before it is accepted &mdash; an unmounted drive looks exactly ' +
+          'like a typo otherwise.',
+          '<div class="pair"><input id="d-dir" value="' +
+          esc(d.data_dir_configured || '') + '" placeholder="' +
+          esc(d.data_dir) + '"><button id="d-browse">Browse…</button></div>',
+          'data_dir') +
+    field('Keep readings for (days)', '0 keeps everything, which is the default.',
+          '<input id="d-ret" value="' + esc(s.retention_days) + '">', 'retention_days') +
+    field('Poll every (minutes)', 'Polling faster than your quickest source reports spends ' +
+          'API calls for no new data.',
+          '<input id="d-poll" value="' + esc(s.poll_minutes) + '">', 'poll_minutes') +
+    field('Local dashboard', 'Served on 127.0.0.1 only, on demand.',
+          '<input type="checkbox" id="d-serve"' + (s.serve ? ' checked' : '') + '>', 'serve') +
+    '<div class="actions"><button class="pri" id="d-save">Save</button>' +
+    '<span id="d-status"></span></div>';
+
+  $('d-browse').onclick = () => browseInto('d-dir', 'Where should readings be stored?');
+
+  $('d-save').onclick = () => save({
+    data_dir: $('d-dir').value,
+    retention_days: numberOrNull($('d-ret').value),
+    poll_minutes: numberOrNull($('d-poll').value),
+    serve: $('d-serve').checked
+  }, $('d-status'));
+}
+
+/* Ask the machine for a folder. A page cannot choose a directory itself --
+   a file input hands over contents, never a path -- so the server, which is
+   on this same machine, puts up the real dialog. */
+async function browseInto(inputId, prompt){
+  const r = await postJSON('/api/choose-folder', {prompt: prompt},
+                           {undone: 'No folder was chosen.'});
+  if (!r.ok) return;
+  const body = r.body;
+  if (body.path){
+    $(inputId).value = body.path;
+    banner(body.writable === false ? 'bad' : '',
+           body.writable === false ? esc(body.error) : '');
+    return;
+  }
+  // Cancelling is not an error and must not be shown as one.
+  if (body.reason && body.reason !== 'cancelled'){
+    banner('warn', esc(body.reason) + ' — type the path instead.');
+  }
+}
+
+/* --------------------------------------------------------------- backup */
+function drawBackup(){
+  const d = SETTINGS.data || {};
+  $('p-backup').innerHTML =
+    '<h2>Backup and restore</h2>' +
+    '<p class="lede">One portable archive holding your settings and every reading, so a ' +
+    'reinstall, a new machine or a future version of Airo picks up exactly where this one ' +
+    'left off. The database is snapshotted rather than copied, so an archive taken while ' +
+    'Airo is polling is still coherent.</p>' +
+
+    field('Save it in', 'Any folder on this machine, including an external drive. The ' +
+          'path is checked before anything is written &mdash; an unmounted drive looks ' +
+          'exactly like a typo otherwise.',
+          '<div class="pair"><input id="b-dir" value="" placeholder="' +
+          esc(d.data_dir) + '"><button id="b-browse">Browse…</button></div>',
+          'directory') +
+    field('Include account keys',
+          'Off by default. A backup ends up on cloud drives and USB sticks in a way a ' +
+          'settings file never does. Without them a restore works fully, and asks you to ' +
+          'paste your keys again.',
+          '<label><input type="checkbox" id="b-keys"> include my API keys</label>', '') +
+    '<div class="actions"><button class="pri" id="b-export">Export now</button>' +
+    '<span id="b-status"></span></div>' +
+    '<div id="b-result"></div>' +
+
+    '<h2 style="margin-top:18px">Restore from a backup</h2>' +
+    '<p class="lede">Airo reads the archive and shows you what is inside it before ' +
+    'anything is replaced. Whatever it replaces is kept alongside, timestamped.</p>' +
+    field('Archive', '', '<input id="r-path" placeholder="/path/to/airo-backup-….tar.gz">',
+          'path') +
+    '<div class="actions"><button id="r-inspect">Examine it</button>' +
+    '<span id="r-status"></span></div>' +
+    '<div id="r-result"></div>';
+
+  $('b-export').onclick = doExport;
+  $('r-inspect').onclick = doInspect;
+  $('b-browse').onclick = () => browseInto('b-dir', 'Where should the backup go?');
+}
+
+async function backupCall(path, payload, status){
+  // `null` on failure rather than a result object, because every caller does
+  // the same thing with it: `if (!b) return;`. postJSON has already said what
+  // went wrong, in the status line or the banner.
+  const r = await postJSON(path, payload,
+                           {status, working: 'Working…', fields: true});
+  return r.ok ? r.body : null;
+}
+
+/* What is actually inside an archive, shown before anything is acted on.
+
+   Both the export result and the restore preview use this, so the two can
+   never describe the same file differently. `restorable` and `contains_keys`
+   are the server's verdicts after opening the archive -- not inferred from the
+   filename, because a backup that merely looks intact is the one that fails
+   when it is finally needed. */
+function describeArchive(b){
+  return '<table class="list">' +
+    '<tr><td>Taken</td><td>' + esc(b.created_utc) + '</td></tr>' +
+    '<tr><td>Readings</td><td>' + esc(Number(b.readings).toLocaleString()) + '</td></tr>' +
+    '<tr><td>Sources</td><td>' + esc((b.sources || []).join(', ') || 'none') + '</td></tr>' +
+    '<tr><td>Size</td><td>' + esc((b.bytes / 1e6).toFixed(1)) + ' MB</td></tr>' +
+    '<tr><td>Restorable</td><td>' + (b.restorable
+      ? '<span class="tag on">verified</span>'
+      : '<span class="tag no">no — ' + esc(b.reason) + '</span>') + '</td></tr>' +
+    '<tr><td>Keys inside</td><td>' + (b.contains_keys
+      ? '<span class="tag no">yes — treat this file as a secret</span>'
+      : '<span class="tag off">no</span>') + '</td></tr>' +
+    '</table>';
+}
+
+async function doExport(){
+  const b = await backupCall('/api/backup/export', {
+    directory: $('b-dir').value,
+    include_keys: $('b-keys').checked
+  }, $('b-status'));
+  if (!b) return;
+  $('b-result').innerHTML =
+    '<div class="msg' + (b.contains_keys ? ' warn' : '') + '">' +
+    '<b>Written to <code>' + esc(b.path) + '</code></b>' +
+    (b.contains_keys ? '<br>This archive contains your API keys. It is readable only by ' +
+      'your account here — keep it that way wherever you copy it.' : '') +
+    '</div>' + describeArchive(b) +
+    '<div class="note">Restore it on another machine by pointing the box below at this ' +
+    'file, or with <code>python3 backup.py restore ' + esc(b.path) + '</code>.</div>';
+}
+
+/* Examine before replacing. Restore is the most destructive thing this page
+   can do, so it is deliberately two steps: inspect, read what is in the file,
+   and only then get an action button. An archive the server cannot verify
+   offers no button at all -- refusing is better than half-restoring over a
+   working setup.
+
+   It is a replacement, not a merge, and the wording says so. A timestamped
+   copy of whatever is displaced is kept beside it, which is what makes the
+   step reversible; that guarantee lives in backup.py, and this text is only
+   true for as long as it does. */
+async function doInspect(){
+  const b = await backupCall('/api/backup/inspect', {path: $('r-path').value},
+                             $('r-status'));
+  if (!b) return;
+  $('r-result').innerHTML =
+    describeArchive(b) +
+    (b.restorable
+      ? '<div class="msg warn"><b>Restoring replaces your current settings and ' +
+        'readings.</b> A timestamped copy of everything replaced is kept beside it, so ' +
+        'this is reversible &mdash; but it is not a merge.</div>' +
+        '<div class="actions">' +
+        '<label><input type="checkbox" id="r-keys" checked> also restore any keys inside' +
+        '</label> ' +
+        '<button id="r-go">Replace my setup with this backup</button>' +
+        '<span id="r-go-status"></span></div>'
+      : '<div class="msg bad">This archive cannot be restored, so Airo will not try. ' +
+        'Your current setup is untouched.</div>');
+
+  const go = $('r-go');
+  if (go) go.onclick = async () => {
+    const done = await backupCall('/api/backup/restore', {
+      path: $('r-path').value, force: true, keys: $('r-keys').checked
+    }, $('r-go-status'));
+    if (!done) return;
+    SETTINGS = done.settings || SETTINGS;
+    banner('', '');
+    draw();
+    $('r-result').innerHTML = '<div class="msg"><b>Restored.</b> Your settings above are ' +
+      'from the backup. Readings were replaced too.</div>';
+  };
+}
+
+/* --------------------------------------------------------------- footer */
+function drawFooter(){
+  const nets = (SETTINGS.networks || []).filter(n => n.in_use);
+  const credits = nets.map(n => esc(n.attribution || n.label) +
+    (n.licence ? ' (' + esc(n.licence) + ')' : '')).join(' · ');
+  $('foot').innerHTML =
+    (credits ? credits + '<br>' : '') +
+    'Airo reports measurements. It is not medical advice, and it cannot tell you whether ' +
+    'the air is safe for you — if you have a health condition affected by air quality, ' +
+    'talk to a health professional.';
+}
+
+/* The one key the status line advertises. Not named `drawSomething`: the
+   panel contract pairs every draw* function with a panel() call, and this
+   draws nothing. Ignored while a field has focus, or typing "d" into the
+   address box would leave the page mid-edit. */
+function bindKeys(){
+  if(!document.addEventListener) return;
+  document.addEventListener('keydown', ev => {
+    if(ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    const tag = ev.target && ev.target.tagName;
+    if(tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+    if(ev.key === 'd'){ ev.preventDefault(); location.href = '/dashboard.html'; }
+  });
+}
+try{ bindKeys(); }catch(e){ console.error('key bindings failed:', e); }
+
+window.addEventListener('DOMContentLoaded', () => {
+  load().catch(e => {
+    banner('bad', '<b>Could not load your settings.</b> ' + esc(e.message) +
+      '<br>Airo may not be running. Start it with <code>python3 poller.py --serve</code>.');
+  });
+});
+</script>
+</body>
+</html>

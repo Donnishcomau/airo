@@ -1,0 +1,9 @@
+# The sponsor button. There is no sponsor account, and none is planned.
+#
+# Airo is dual-licensed: AGPL-3.0-or-later for everyone, plus a commercial
+# licence for people who cannot use that. The commercial licence is not a
+# donation and not a tier — it is the funding route, so the button points at
+# the terms and the contact address rather than at a tip jar.
+#
+# Nothing about the local tool is behind it. See LICENSING.md.
+custom: ["https://github.com/Donnishcomau/airo/blob/main/LICENSING.md"]

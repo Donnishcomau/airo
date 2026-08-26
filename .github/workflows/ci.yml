@@ -1,0 +1,483 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  sign-off:
+    name: Contributor sign-off
+    # Dual licensing only works if every contribution can also be offered
+    # commercially, and that consent has to be collected BEFORE code is merged.
+    # Retrofitting it means finding every contributor -- including ones who have
+    # changed jobs or lost interest -- or removing their work. See CLA.md.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The full range of the PR, plus the base, so every commit can be
+          # inspected. A shallow clone would silently check nothing.
+          fetch-depth: 0
+
+      - name: Every commit carries a matching Signed-off-by
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+          range="$BASE..$HEAD"
+          commits=$(git rev-list --no-merges "$range")
+          if [ -z "$commits" ]; then
+            echo "No non-merge commits to check."
+            exit 0
+          fi
+
+          missing=0
+          for sha in $commits; do
+            subject=$(git log -1 --format=%s "$sha")
+            author="$(git log -1 --format='%an <%ae>' "$sha")"
+            # A bot cannot sign the CLA, and its commits — version pins written
+            # by a machine — carry no copyrightable expression to grant. The
+            # gate exists for human contributions; a known bot author is
+            # recorded here, not blocked. Human commits in the same pull
+            # request are still checked. See CLA.md §Automated commits.
+            case "$author" in
+              *"[bot]"*)
+                echo "  bot       ${sha:0:8}  $subject  (sign-off not required)"
+                continue;;
+            esac
+            # Trailers only: a mention of the phrase in the body is not a
+            # sign-off, and neither is one naming somebody else.
+            if git log -1 --format=%B "$sha" | grep -qiE "^Signed-off-by: .+ <.+@.+>$"; then
+              if git log -1 --format=%B "$sha" | grep -qiFx "Signed-off-by: $author"; then
+                echo "  ok        ${sha:0:8}  $subject"
+              else
+                echo "  MISMATCH  ${sha:0:8}  $subject"
+                echo "            author:   $author"
+                echo "            signed:   $(git log -1 --format=%B "$sha" | grep -iE '^Signed-off-by:' | head -1)"
+                missing=$((missing + 1))
+              fi
+            else
+              echo "  MISSING   ${sha:0:8}  $subject"
+              missing=$((missing + 1))
+            fi
+          done
+
+          if [ "$missing" -ne 0 ]; then
+            echo ""
+            echo "------------------------------------------------------------------"
+            echo "$missing commit(s) have no usable Signed-off-by line."
+            echo ""
+            echo "Airo is dual licensed (AGPL-3.0-or-later plus a commercial licence)."
+            echo "A contribution offered only under the AGPL cannot be included in a"
+            echo "commercially licensed copy, and one such contribution anywhere in"
+            echo "the tree removes that option for the whole project. The sign-off is"
+            echo "how you grant the broader licence. You keep your copyright."
+            echo ""
+            echo "Read CLA.md - one page, and it says exactly what you grant and keep."
+            echo ""
+            echo "To sign off everything on your branch:"
+            echo ""
+            echo "    git rebase --signoff origin/main"
+            echo "    git push --force-with-lease"
+            echo ""
+            echo "The name and email must match the commit author."
+            echo "------------------------------------------------------------------"
+            exit 1
+          fi
+          echo ""
+          echo "All $(echo "$commits" | wc -l | tr -d ' ') commit(s) signed off."
+
+  test:
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    # The poller is cross-platform now, so it has to be tested that way.
+    # Scheduling differs per OS; the data layer must not.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ['3.9', '3.12']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Record the home directory before the suite runs
+        # The rule is that no test may touch the user's own ~/.airo. It has
+        # been broken four times, and the fourth deleted three of the
+        # maintainer's backup archives — a module-level Path.home() resolved
+        # the real path at *import*, before the test guards could redirect it.
+        #
+        # tools/check.py makes the same comparison locally. This is here so
+        # the check cannot be skipped by not running check.py: it is a
+        # required check, on every push, on every platform.
+        shell: bash
+        run: |
+          python - <<'EOF' > "$RUNNER_TEMP/home-before.json"
+          import hashlib, json, os
+          from pathlib import Path
+          root = Path.home() / ".airo"
+          out = {}
+          if root.exists():
+              for p in sorted(root.rglob("*")):
+                  if p.is_file():
+                      out[p.relative_to(root).as_posix()] = hashlib.sha256(
+                          p.read_bytes()).hexdigest()
+          print(json.dumps(out))
+          EOF
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+
+      - name: The suite must not have written into the real home directory
+        shell: bash
+        run: |
+          python - "$RUNNER_TEMP/home-before.json" <<'EOF'
+          import hashlib, json, sys
+          from pathlib import Path
+          before = json.loads(Path(sys.argv[1]).read_text())
+          root = Path.home() / ".airo"
+          after = {}
+          if root.exists():
+              for p in sorted(root.rglob("*")):
+                  if p.is_file():
+                      after[p.relative_to(root).as_posix()] = hashlib.sha256(
+                          p.read_bytes()).hexdigest()
+          if before == after:
+              print(f"~/.airo unchanged ({len(after)} file(s))")
+              raise SystemExit(0)
+          removed = sorted(set(before) - set(after))
+          changed = sorted(k for k in set(before) & set(after)
+                           if before[k] != after[k])
+          added = sorted(set(after) - set(before))
+          print("::error::the test suite wrote into the real ~/.airo")
+          for label, items in (("DELETED", removed), ("modified", changed),
+                               ("created", added)):
+              for item in items:
+                  print(f"::error::{label}: {item}")
+          raise SystemExit(1)
+          EOF
+
+      - name: Brand-new-install path
+        # Called out separately because it is the one path no existing user
+        # exercises: the person who hits a broken first run is a stranger who
+        # never reports it.
+        run: python -m unittest tests.test_fresh_install -v
+
+  timezones:
+    name: Tests (awkward timezones)
+    # Every runner above is UTC, and the developer is in Queensland, which has
+    # no daylight saving. Between them those two facts hid a report that named
+    # the wrong hour for half the year everywhere that puts its clocks
+    # forward -- in a tool whose entire finding is about which hour of the
+    # evening is worst. Running in one timezone is the same shape of gap as
+    # running on one platform, and this project already learned that lesson
+    # the expensive way.
+    #
+    # Los Angeles observes DST. Kolkata is half an hour off the hour, Kathmandu
+    # three quarters, and Chatham is both at once -- the cases where a UTC-hour
+    # bucket straddles two local hours. Linux only: Windows does not honour TZ,
+    # and setting it there would test nothing while looking like it did.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Run the suite in each zone
+        run: |
+          set -uo pipefail
+          failed=0
+          for tz in America/Los_Angeles Asia/Kolkata Pacific/Chatham America/St_Johns; do
+            echo "::group::TZ=$tz"
+            if TZ="$tz" python -m unittest discover -s tests; then
+              echo "  ok    $tz"
+            else
+              echo "::error::the suite fails under TZ=$tz"
+              failed=$((failed + 1))
+            fi
+            echo "::endgroup::"
+          done
+          exit "$failed"
+
+  lint:
+    name: Syntax and policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Compile Python
+        run: |
+          python -m py_compile poller.py store.py fusion.py scheduler.py analyse.py setup.py backup.py
+          echo "python ok"
+
+      # The project shipped four macOS-only shell scripts wrapping commands
+      # Python already exposed. They were deleted rather than ported: on
+      # Windows and Linux they never ran at all, and a second copy of
+      # maintained behaviour drifts. This step stays as a guard so a new one
+      # is a deliberate choice rather than a habit.
+      - name: No control scripts have crept back in
+        run: |
+          # The rule this enforces is about the four macOS-only control
+          # scripts that used to sit at the repo root — install.sh, check.sh,
+          # ctl.sh, dashboard.sh — each duplicating a command that belongs in
+          # poller.py or scheduler.py.
+          #
+          # It was written as "any *.sh anywhere", which also condemned
+          # tools/install-hooks.sh. That one installs a git hook, which is a
+          # per-clone file that cannot be committed into .git/hooks, so it is
+          # not duplicating the Python CLI and cannot be replaced by it.
+          # Matching the root only says what was actually meant.
+          found=$(find . -maxdepth 1 -name '*.sh' | head -20)
+          if [ -n "$found" ]; then
+            echo "$found"
+            echo "::error::Control scripts at the repo root duplicate the"
+            echo "::error::Python CLI and are macOS-only in practice. Add the"
+            echo "::error::command to poller.py or scheduler.py — see"
+            echo "::error::ARCHITECTURE."
+            exit 1
+          fi
+          echo "no shell scripts"
+
+      - name: Validate JSON
+        run: |
+          python -c "import json; json.load(open('config.example.json')); print('config.example.json ok')"
+          python -c "import json; json.load(open('tray/tauri.conf.json')); print('tauri.conf.json ok')"
+
+      - name: Check dashboard JavaScript
+        run: |
+          python - <<'PY'
+          import re, pathlib
+          for name in ('dashboard.html', 'tray/ui/index.html'):
+              html = pathlib.Path(name).read_text()
+              js = re.findall(r'<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>', html, re.S)[-1]
+              out = pathlib.Path(name.replace('/', '_') + '.js')
+              out.write_text(js)
+              # every getElementById target must exist in the markup
+              ids  = set(re.findall(r"id=['\"]([A-Za-z0-9_]+)['\"]", html))
+              used = set(re.findall(r"getElementById\(['\"]([A-Za-z0-9_]+)['\"]\)", js))
+              missing = sorted(used - ids)
+              if missing:
+                  raise SystemExit(f"{name}: getElementById targets missing: {missing}")
+              print(f"{name}: element ids ok -> {out}")
+          PY
+          for f in dashboard.html.js tray_ui_index.html.js; do node --check "$f"; done
+          echo "dashboard JS ok"
+
+      - name: Guard against committed secrets
+        run: |
+          if git ls-files | grep -E '(^|/)(apikey|\.env|secrets\.json)$|\.key$'; then
+            echo "::error::A secrets file is tracked by git"
+            exit 1
+          fi
+          # crude scan for an API key accidentally pasted into source
+          if grep -rInE '[A-F0-9]{8}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{4}-[A-F0-9]{12}' \
+               --include='*.py' --include='*.sh' --include='*.json' --include='*.rs' . ; then
+            echo "::error::Possible API key committed"
+            exit 1
+          fi
+          echo "no secrets found"
+
+      - name: Guard against a committed configuration
+        run: |
+          # A config holds a location and chosen sensors -- personal data.
+          # setup.py writes to ~/.airo/config.json for exactly this reason.
+          if git ls-files | grep -qx 'config.json'; then
+            echo "::error::config.json is tracked. Settings belong in ~/.airo/config.json"
+            exit 1
+          fi
+          echo "no configuration committed"
+
+      - name: Guard against committed user data
+        run: |
+          # This guard exists because the narrow version failed. It matched
+          # `data/` only, and --migrate-data leaves the old folder as
+          # `data.migrated-<timestamp>/` -- which matched nothing, and 16,995
+          # rows of one person's location history were committed.
+          #
+          # So: match by SHAPE, not by one known directory name. A path that
+          # looks like user data, or a file whose contents look like readings,
+          # fails the build regardless of where it sits.
+          fail=0
+
+          # 1. Paths that look like a data or export directory, at any depth.
+          if git ls-files | grep -nE '(^|/)(data|export)(\.|/)|(^|/)(data|export)$'; then
+            echo "::error::A data/export directory is tracked"
+            fail=1
+          fi
+
+          # 2. Databases, logs and reading exports, anywhere.
+          if git ls-files | grep -nE '\.(db|db-wal|db-shm|sqlite3?)$|readings.*\.csv$|\.log$'; then
+            echo "::error::A database, log or readings export is tracked"
+            fail=1
+          fi
+
+          # 3. Backup archives, which may contain everything above plus keys.
+          if git ls-files | grep -nE 'airo-backup.*\.tar\.gz$|\.airo-backup'; then
+            echo "::error::A backup archive is tracked"
+            fail=1
+          fi
+
+          # 4. Content check: the reading CSV header, wherever it appears.
+          #    Catches a data file committed under an innocent name.
+          if git grep -lE '^utc,local,source,pm25' -- ':!tests' ':!*.md' 2>/dev/null | grep .; then
+            echo "::error::A file containing PM2.5 readings is tracked"
+            fail=1
+          fi
+
+          # 5. A real configuration, as opposed to the shipped example.
+          if git ls-files | grep -qx 'config.json'; then
+            echo "::error::config.json is tracked — settings belong in ~/.airo/"
+            fail=1
+          fi
+
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::User data must never enter the repository. See CONVENTIONS.md rule 3."
+            exit 1
+          fi
+          echo "no user data committed"
+
+      - name: Confirm the Python side stays dependency-free
+        run: |
+          # The poller must keep running on a stock Python. The Rust tray is
+          # the deliberate exception — it is a separate, optional binary.
+          if [ -f requirements.txt ] || [ -f Pipfile ] || [ -f pyproject.toml ]; then
+            echo "::error::The Python side is standard-library only — see CONTRIBUTING.md"
+            exit 1
+          fi
+          # Runs the test that encodes this rule rather than a second
+          # implementation of it. There were two — this inline script and
+          # test_contracts.py::TestTheZeroDependencyRuleHolds — and they
+          # drifted within hours: the test learned that tools/ may use a named
+          # development dependency, and this did not, so CI failed a PR the
+          # suite passed. Two copies of one decision is the thing this project
+          # keeps paying for.
+          #
+          # Still a separate step, and still fast: it runs one class, not the
+          # suite, so the lint job answers in seconds.
+          python -m unittest -v tests.test_contracts.TestTheZeroDependencyRuleHolds
+
+  faults:
+    name: Committed faults still fail
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install coverage
+        run: pip install coverage
+      - name: Every committed fault must still turn a test red
+        # A guard that has stopped guarding looks exactly like one that works.
+        # Running these by hand proves something once, on the day it was run;
+        # running them here proves it on every push.
+        #
+        # Non-zero covers three outcomes and all of them want attention: a
+        # fault nothing caught (a guard that has gone), one aimed at a line the
+        # suite never reaches (a fault that has gone stale), and a baseline
+        # that was already failing (a run that would have meant nothing).
+        run: |
+          status=0
+          for spec in tools/faults/*.json; do
+            echo "::group::$spec"
+            python tools/faultcheck.py "$spec" || status=1
+            echo "::endgroup::"
+          done
+          exit $status
+
+  coverage:
+    name: Coverage floor
+    # One platform, one version. What the tests *reach* does not vary by OS —
+    # the platform-specific work is already covered by the six Tests jobs, and
+    # running coverage on all of them would double CI time for the same answer.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install coverage
+        # A DEVELOPMENT dependency, installed here and nowhere near what
+        # ships. Hard rule 1 is about the runtime: the installer carries a
+        # bare interpreter with no package manager, so a shipped module that
+        # imports a package fails on first launch on a user's machine. That
+        # guarantee is enforced separately by
+        # test_contracts.py::TestTheZeroDependencyRuleHolds, which reads every
+        # shipped module and every tools/ script off disk.
+        run: pip install coverage
+
+      - name: Measure, and compare against the floor
+        # Floors are per module as well as overall, because a total can hold
+        # steady while one module quietly regresses and another improves.
+        # Raising them is a deliberate act: `tools/check.py --raise-floor`,
+        # committed on its own so a ratchet is visible in review.
+        run: python3 tools/check.py --fast
+
+  tray:
+    name: Tray builds (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Linux system dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libgtk-3-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tray
+
+      - uses: actions/setup-python@v7
+        # This job had no Python of its own; the staging step below needs one,
+        # and `python3` is not guaranteed to exist on the Windows runner
+        # without it.
+        with:
+          python-version: "3.12"
+
+      - name: Stage a payload so the bundler config resolves
+        # tauri.conf.json declares `bundle.resources: ["payload/**/*"]`, and
+        # the build script resolves that glob even for `cargo check` — with no
+        # payload it fails with "path not found or didn't match any files".
+        # Staged without a runtime, which is a supported state and skips a
+        # 69 MB download that this job does not need.
+        run: python3 tools/stage_bundle.py
+
+      - name: Check the tray compiles
+        working-directory: tray
+        run: cargo check --locked || cargo check
+
+      - name: Tray unit tests
+        working-directory: tray
+        # These cover the tray title, band symbols and -- most importantly --
+        # that a real latest.json written by the poller deserialises. That is
+        # the contract between the Python and Rust halves.
+        run: cargo test --locked || cargo test
+
+      - name: Reject air-quality logic in the tray
+        working-directory: tray
+        shell: bash
+        run: |
+          # CONVENTIONS.md rule 7: the tray renders, it does not decide. A numeric
+          # threshold in Rust is a second copy of a health-relevant decision.
+          if grep -nE '(pm25|aqi)[^)]*[<>]=? *[0-9]' src/*.rs | grep -v '^src/airo.rs:.*tests'; then
+            echo "::error::Numeric air-quality comparison found in the tray — put it in Python"
+            exit 1
+          fi
+          echo "no air-quality logic in the tray"

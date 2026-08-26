@@ -1,0 +1,82 @@
+{
+  "_README": "This is an EXAMPLE. Do not edit it and expect it to be used. Run `python3 setup.py`, which writes your real settings to ~/.airo/config.json \u2014 outside this repository, so your location and chosen sensors can never be committed by accident. Copy this file there manually only if you would rather configure by hand.",
+  "location": {
+    "name": "",
+    "latitude": null,
+    "longitude": null,
+    "timezone": ""
+  },
+  "sources": [],
+  "fusion": {
+    "rule": "nearest"
+  },
+  "aqi_scale": "au",
+  "poll_minutes": 15,
+  "serve": true,
+  "serve_port": 8787,
+  "backfill_days_on_first_run": 7,
+  "retention_days": 0,
+  "capture_weather": true,
+  "source_failure_alert_after": 4,
+  "auto_backup": {
+    "enabled": true,
+    "keep": 7,
+    "interval_hours": 24
+  },
+  "alerts": {
+    "enabled": true,
+    "threshold_pm25": 16.75,
+    "rising_delta": 12,
+    "cooldown_minutes": 60,
+    "notify_when_clear": true,
+    "quiet_hours": [
+      1,
+      7
+    ],
+    "sound": "Ping"
+  },
+  "_example_sources": [
+    {
+      "_comment": "A consumer sensor: hyperlocal, 10-minute resolution, needs a free key. Find one near you at map.purpleair.com, or let setup.py search for you.",
+      "provider": "purpleair",
+      "site_id": 1234,
+      "site_name": "Example consumer sensor",
+      "latitude": null,
+      "longitude": null,
+      "read_key": "",
+      "enabled": true
+    },
+    {
+      "_comment": "A regulatory monitor: hourly, no key, CC BY 4.0. Station ids at https://airquality.des.qld.gov.au/v1/stations. Pairing one of these with a consumer sensor is the point \u2014 it is what lets Airo tell a fire next door from regional air quality.",
+      "provider": "qld",
+      "site_id": "example",
+      "site_name": "Example government station",
+      "placement": "outdoor",
+      "enabled": true
+    }
+  ],
+  "_notes": {
+    "location": "Purely descriptive plus the reference point for the 'nearest' fusion rule. It does not select a data source; that is what `sources` is for.",
+    "sources": "A list. Several instruments at one location is the point: a hyperlocal consumer sensor and a regulatory monitor cross-check each other, and Airo flags a reading its neighbours do not support. Each entry needs provider + site_id.",
+    "sources.provider": "'purpleair' (consumer, 10-min, hyperlocal, free key), 'qld' (Queensland Government regulatory network, hourly, no key, CC BY 4.0), 'nsw' (New South Wales and ACT Government regulatory network, hourly, no key, CC BY 4.0), or 'openaq' (global aggregator covering AU/US/CA/ZA/UK/DE/FR/IE/PH, hourly, free key).",
+    "sources.site_id": "purpleair: sensor index from map.purpleair.com. qld: station_id from https://airquality.des.qld.gov.au/v1/stations. nsw: Site_Id from the NSW network's site list. openaq: sensor id from explore.openaq.org. `python3 setup.py` finds these for you.",
+    "sources.read_key": "PurpleAir only, and only if the sensor is privately registered. Leave empty for public sensors.",
+    "sources.placement": "'outdoor', 'indoor' or 'unknown'. Optional: the provider is asked first and a regulatory network is outdoor by definition, so this only needs setting when the provider is wrong or silent. What you say wins, because you can see the sensor. It matters more than it looks -- an indoor sensor is never the headline, never corroborates another reading and never raises an outdoor alert, since 'nearest' would otherwise let kitchen air be reported as the street.",
+    "api_key": "Never put an API key in this file. Keys live in ~/.airo/<provider>.key (mode 600) or in $PURPLEAIR_API_KEY / $OPENAQ_API_KEY, so a config file stays safe to attach to a bug report.",
+    "aqi_scale": "'au' (100 = the NEPM PM2.5 standard of 25 ug/m3), 'us_epa' (2024 revision, 9.0 ug/m3 = AQI 50), or 'raw' (no index, just ug/m3 against the WHO 2021 guideline of 15). Raw ug/m3 is always what gets stored; this only changes how it is presented.",
+    "fusion.rule": "Which source becomes the headline when several disagree. 'nearest' (default \u2014 closest instrument to your location, since local air is the point), 'freshest' (most recently updated), 'all' (show every source; headline is the nearest), or 'blend' (distance and recency weighted \u2014 note this reports a value no single instrument measured).",
+    "units": "What to *show* a measurement in, never what to store it as. Absent means 'follow the machine's region', which is the default and needs no entry. Either a system name -- 'metric' or 'us' -- or a mapping per quantity, e.g. {\"temperature\": \"f\"}. An unknown quantity or unit is rejected with the list of valid ones rather than ignored. Storage is unaffected: ug/m3, Celsius, m/s and km stay canonical in the database.",
+    "retention_days": "How long to keep readings. 0 or absent means forever, which is the default and the point of the tool -- this record cannot be regenerated. A finite window deletes, and every deletion is logged.",
+    "capture_weather": "Record the hour's wind, temperature, humidity and pressure from Open-Meteo beside the readings -- the cause the readings are the effect of. On by default; needs a configured location. Set false to make no weather request at all. A weather failure never costs a reading.",
+    "source_failure_alert_after": "Notify once when a source has been silent for this many consecutive polls (default 4). 'Silent' means it observed nothing, not that the request failed -- a sensor that has dropped off the network keeps being served with its last timestamp, so the provider answers happily while the record grows a hole.",
+    "auto_backup": "Routine local backup, on by default, written after a successful poll so the archive includes what just arrived. 'keep' is how many archives to retain (default 7), 'interval_hours' how often one is due (default 24). A backup nobody remembers to run protects nobody. Keys are excluded from it.",
+    "poll_minutes": "PurpleAir sensors report every ~2 min but the 10-minute average only changes every 10, so below 10 you are burning API points for nothing. Regulatory feeds update hourly, where 15 is already generous.",
+    "alerts.threshold_pm25": "A threshold in raw ug/m3, which is scale-independent and the better choice. 16.75 is the bottom of the Australian amber band; 35.4 is the US EPA 'Unhealthy for sensitive groups' line.",
+    "alerts.threshold_aqi": "Optional alternative, in the units of whichever aqi_scale is configured. threshold_pm25 wins when both are set.",
+    "alerts.rising_delta": "Early warning. Fires when the 10-minute average runs this far above the 1-hour average \u2014 i.e. climbing fast \u2014 before the threshold is actually crossed.",
+    "alerts.cooldown_minutes": "Minimum gap between notifications, so hovering at the threshold does not spam you.",
+    "alerts.quiet_hours": "[start, end] in 24h local time. Silent inside this window. [1, 7] means no alerts between 1am and 7am.",
+    "alerts.sound": "Any macOS system sound name, or null for silent. Ping, Glass, Submarine, Basso, Hero."
+  },
+  "data_dir": ""
+}

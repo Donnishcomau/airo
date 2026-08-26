@@ -1,0 +1,38 @@
+[
+ {
+  "name": "the wall-clock fixture contract stops enumerating",
+  "file": "tests/test_contracts.py",
+  "find": "                if \"insert_readings\" not in body:",
+  "replace": "                if True:",
+  "target": "tests.test_contracts",
+  "edits_a_guard": true
+ },
+ {
+  "name": "the fault runner stops refusing a red baseline",
+  "file": "tools/faultcheck.py",
+  "find": "        if not ok:\n            print(f\"  {RED}BASELINE FAILING{RESET} {label}: \"",
+  "replace": "        if False:\n            print(f\"  {RED}BASELINE FAILING{RESET} {label}: \"",
+  "target": "tests.test_faultcheck"
+ },
+ {
+  "name": "the fault runner stops clearing bytecode after a restore",
+  "file": "tools/faultcheck.py",
+  "find": "def restore(fault, original):\n    path = ROOT / fault[\"file\"]\n    path.write_text(original, encoding=\"utf-8\")\n    clear_bytecode()",
+  "replace": "def restore(fault, original):\n    path = ROOT / fault[\"file\"]\n    path.write_text(original, encoding=\"utf-8\")",
+  "target": "tests.test_faultcheck"
+ },
+ {
+  "name": "a no-op fault is accepted instead of refused",
+  "file": "tools/faultcheck.py",
+  "find": "        if is_a_no_op(path, original,",
+  "replace": "        if False and is_a_no_op(path, original,",
+  "target": "tests.test_faultcheck"
+ },
+ {
+  "name": "a fault on a line nothing runs is reported as a gap",
+  "file": "tools/faultcheck.py",
+  "find": "            if touched and not (touched & ran):",
+  "replace": "            if False:",
+  "target": "tests.test_faultcheck"
+ }
+]

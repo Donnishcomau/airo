@@ -1,0 +1,22 @@
+{
+  "measured_on": {
+    "platform": "ubuntu / python:3.12-slim",
+    "python": "3.12",
+    "reproduce": "docker run --rm -v \"$PWD\":/src -w /src python:3.12-slim sh -c 'pip install -q coverage && python -m coverage run --source=. --omit=\"tests/*,tools/*,setup.py\" -m unittest discover -s tests && python -m coverage report --precision=1'",
+    "why": "Measured on the platform that enforces it, not on the developer's. Coverage genuinely differs: scheduler.py runs its macos_* branches on a Mac and its linux_* branches on Linux, and poller.py has platform paths too. Linux reads lower on both of those modules, so a floor set on macOS fails CI \u2014 it did, by 0.1%. An earlier version of this file added a point of headroom to paper over that; measuring where it is enforced is the actual fix, and the command above reproduces it in about a minute.",
+    "run_it_more_than_once": "These numbers are the lowest of at least three runs, and they should now be identical every time. They were not: poller.py alternated between 82.0% and 81.8%, so the floor had been written from a lucky run and the gate failed about one run in three against whatever diff happened to be open. The cause was a test asking PurpleAir for a window built from two separate now() calls \u2014 two days plus a few microseconds, which the two-day chunking turned into a second request of epsilon width, and whether that second request happened depended on whether both now() calls landed in the same microsecond. Fixed at the source rather than by padding the floor. If a figure here starts moving between runs again, that is the thing to look for: a test whose behaviour depends on the wall clock, not a reason to add headroom.",
+    "eight_failures_are_expected_in_this_container": "python:3.12-slim has no git binary and runs as root, so four tests that shell out to git error, and four that make a directory unwritable with chmod fail because root ignores the mode. The same eight fail on a clean main. CI runs as a non-root user with git present and they pass there; coverage is unaffected either way."
+  },
+  "modules": {
+    "analyse.py": 99.1,
+    "backup.py": 95.2,
+    "forecast.py": 100.0,
+    "fusion.py": 100.0,
+    "poller.py": 89.3,
+    "scheduler.py": 91.0,
+    "store.py": 96.7,
+    "weather.py": 90.6,
+    "units.py": 100.0
+  },
+  "total": 92.3
+}

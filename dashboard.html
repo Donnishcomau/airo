@@ -1,0 +1,2495 @@
+<!DOCTYPE html>
+<!--
+  Airo — the dashboard.
+
+  One file: markup, styles, a small canvas charting library and the page logic.
+  No build step, no framework, no external request of any kind. Open it and it
+  works; there is nothing to compile and nothing to install.
+
+  How it fits the whole
+  ---------------------
+  Served by poller.py on 127.0.0.1, on demand only — there is no dashboard
+  process sitting resident. It reads two endpoints and renders them:
+
+      api/latest   the current fused reading, its provenance, every source,
+                   the band table, the trend, and the attributions owed
+      api/series   bucketed history for the charts
+
+  It writes nothing. Every judgement it displays — which source is the
+  headline, which band a number falls in, which way the air is heading, whether
+  a reading is corroborated — was made in Python and arrives already decided.
+  That is the same boundary the tray observes, and for the same reason: a
+  health-relevant decision implemented here would be a second copy, free to
+  drift out of step with the tray and the notifications.
+
+  What it assumes
+  ---------------
+  * **The server is same-origin and local.** Relative URLs throughout, no CORS,
+    no credentials. If the page is ever served from anywhere but loopback, the
+    absence of escaping on data-derived HTML below becomes a real problem.
+  * **api/latest carries the band table and the risk window.** The Australian
+    ceilings near BAND_CSS, and the 3pm–1am window near RISK_START, are a
+    bootstrap for the first paint only, replaced by the served values on load.
+    A US EPA install that fell back to the ceilings would read its index
+    against Australian boundaries — which is exactly what happened once. The
+    window is the same shape of mistake: it is configurable, and a page that
+    assumes it shades the wrong hours and buckets the wrong nights.
+  * **Local time has no daylight saving.** True in Queensland, wrong elsewhere,
+    and it is load-bearing in two places: day bucketing (localDateKey) and tick
+    generation. Day-sized ticks already advance by calendar days for this
+    reason; the evening-window logic does not yet. ROADMAP #5.
+  * **Numbers arrive as µg/m³ and as an index.** Prefer the served µg/m³ over
+    converting an index back — the relationship is linear on the Australian
+    scale only.
+
+  What must not be done here
+  --------------------------
+  * **No external subresource, ever.** Not a CDN script, not a webfont, not a
+    remote image. It leaks the viewer's IP from a tool whose entire purpose is
+    keeping the data local, and test_contracts.py fails the build on any.
+  * **No band boundary, alert threshold or trend rule written as a literal.**
+    They come from the server. Each has been duplicated here once already.
+  * **No health advice written here.** The sentence under the headline is the
+    served band's own `advice`, printed as it arrives or not at all. This page
+    used to hold six of them and hand them to whichever band landed in the
+    same array slot, so a `raw` install was told to enjoy normal activities in
+    air above the WHO guideline. Wording is a Python decision (rule 7, D8).
+  * **No render step outside the RENDER_STEPS guard.** One unguarded throw
+    blanked four unrelated panels; the guard is on the act of running a step
+    precisely so a new step cannot forget it.
+  * **Nothing removed from the footer.** It is a legal surface — PurpleAir ToS
+    §4.8/§7.3 attribution and accuracy wording, CC BY for the government feeds,
+    and the health disclaimer — enforced by tests/test_obligations.py.
+
+  Reading it
+  ----------
+      style block   theme variables and layout; the band colours live here
+      body          the panels, all populated by script
+      script block  Chart      ~390 lines of canvas charting, replacing Chart.js
+                    bands      BAND_CSS, BANDS, adoptBands, bandFor
+                    window     RISK_START/RISK_END, adoptRiskWindow,
+                               inRiskWindow, eveHours, nightOf
+                    loading    loadData, primarySeries, overdueMinutes
+                    rendering  RENDER_STEPS and one function per panel
+                    charting   ticks, drawChart, and the day/evening analysis
+
+  Tag names are spelled out rather than written as tags on purpose: the
+  verification block in CONVENTIONS.md extracts this file's script by regex to
+  syntax-check it, and a literal opening tag inside this comment breaks that
+  extraction. Found the obvious way.
+-->
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Airo — air quality</title>
+<style>
+  /* ------------------------------------------------------------------
+     "Tech-Health": a bench instrument's readout, not a dashboard.
+
+     Two type registers, and the split carries meaning rather than taste:
+     anything the machine MEASURED or DECIDED is set in the mono stack --
+     readings, provenance, rules, ages, table headers, the status line. Any
+     sentence addressed to a PERSON is set in the sans stack -- the served
+     advice, the notes, the disclaimer. Numbers you compare must align; words
+     you read should not pretend to be output.
+
+     System stacks only. An external webfont would leak the viewer's IP from a
+     tool whose whole point is that the data stays here, and the build fails
+     on any external subresource.
+
+     Dark only, deliberately. This surface is glanced at, often at night, and
+     the band ramp below is a served decision (hard rule 7) that is tuned to
+     read against a dark ground. The tray window keeps its light scheme
+     because it is docked into somebody else's desktop chrome; this page is
+     the instrument itself.
+     ------------------------------------------------------------------ */
+  :root{
+    /* Chrome: graphite, one instrument cyan. Deliberately clear of the band
+       ramp's green-to-red so an accent can never be misread as a reading. */
+    --bg:#0c0f12; --panel:#12161b; --panel2:#181e24; --line:#222a31;
+    --edge:#2f3a44; --text:#e3e9ef; --dim:#93a2b0; --faint:#5f6d7a;
+    --accent:#57ccd8; --accent2:#173f46;
+    /* The band ramp. Named by the server, styled here and never decided
+       here -- BAND_CSS maps a served band to one of these and nothing on
+       this page picks a boundary. */
+    --vgood:#4cae4c; --good:#9aa832; --fair:#e8a33d; --poor:#dd5c3a;
+    --vpoor:#c0392b; --hazard:#7b241c;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,"DejaVu Sans Mono",Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Ubuntu,"Helvetica Neue",sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);padding:0 0 22px;
+    font:13.5px/1.55 var(--sans);-webkit-font-smoothing:antialiased}
+  .page{max-width:1560px;margin:0 auto;padding:0 16px}
+  ::selection{background:var(--accent2);color:var(--text)}
+  a{color:var(--accent)}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+
+  /* The status line. One row of machine facts, the way a well-kept terminal
+     tells you where you are: what this is, what it is reading, whether it is
+     live, the time, and the keys that do something. Sticky, because the
+     "is this live?" question is asked from anywhere on the page. */
+  .bar{position:sticky;top:0;z-index:5;display:flex;align-items:center;
+    gap:0;flex-wrap:wrap;margin:0 0 16px;padding:0 16px;
+    background:var(--panel);border-bottom:1px solid var(--edge);
+    font-family:var(--mono);font-size:11.5px;color:var(--dim)}
+  .bar h1{font:600 13px/1 var(--mono);margin:0;padding:9px 14px 9px 0;
+    color:var(--text);letter-spacing:.02em}
+  .bar h1::before{content:"▮";color:var(--accent);margin-right:7px;font-size:11px}
+  .bar h1 span{color:var(--faint);font-weight:400;margin-left:7px}
+  .cell{padding:9px 14px;border-left:1px solid var(--line);white-space:nowrap}
+  .bar .spacer{flex:1;border-left:1px solid var(--line);align-self:stretch}
+  .keys{display:flex;gap:0}
+  .key{padding:9px 12px;border-left:1px solid var(--line);color:var(--dim);
+    text-decoration:none;white-space:nowrap;transition:color .15s,background .15s}
+  .key:hover{color:var(--text);background:var(--panel2)}
+  .key kbd{font:inherit;color:var(--accent);border:1px solid var(--accent2);
+    border-radius:3px;padding:0 4px;margin-right:5px}
+  /* The only route from here to the settings page. Without it this page is a
+     dead end -- everything is configurable and nothing on screen says where. */
+  .settingsLink{color:var(--accent);text-decoration:none;font-weight:600}
+  .settingsLink:hover{text-decoration:underline}
+
+  .grid{display:grid;grid-template-columns:1fr 320px;gap:12px;align-items:start}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:3px;padding:13px 14px 14px}
+  .card+.card{margin-top:12px}
+  /* A panel inside a panel, sunk rather than stacked -- two identical boxes
+     nested read as a rendering mistake. */
+  .card .card{background:var(--panel2);border-color:var(--line);margin-bottom:14px}
+  /* Panel labels read like the legend etched beside a control, so a section
+     heading is never mistaken for something the instrument is telling you. */
+  .card h2{font:600 10.5px/1 var(--mono);text-transform:uppercase;letter-spacing:.12em;
+    color:var(--dim);margin:0 0 11px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+  .card h2::before{content:"";width:3px;height:10px;background:var(--accent);
+    flex:none;align-self:center;opacity:.85}
+  .card h2 em,.card h2 .hint{text-transform:none;letter-spacing:.02em;font-style:normal;
+    color:var(--faint);font-weight:400}
+
+  /* The headline. Mono and tabular so the digits sit on the same stems every
+     minute -- a proportional face makes a changing number jitter, which reads
+     as instability in the reading rather than in the typeface. */
+  .hero{margin-bottom:14px}
+  .heroRead{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+  .bignum{font:600 76px/.86 var(--mono);letter-spacing:-.045em;
+    font-variant-numeric:tabular-nums;transition:color .35s ease}
+  .heroMeta{min-width:0;flex:1}
+  .band{display:inline-block;padding:3px 9px;border-radius:2px;font:700 10.5px/1.5 var(--mono);
+    text-transform:uppercase;letter-spacing:.1em;color:#0d0f13;margin-bottom:6px;
+    transition:background .35s ease}
+  .ugm{color:var(--dim);font-size:12.5px;font-variant-numeric:tabular-nums}
+  .trend{font:600 12px/1.5 var(--mono);margin-top:5px}
+
+  /* The scale rail: the served band table drawn as an instrument face. Each
+     segment is as wide as that band's span, so the needle's distance to the
+     next colour is a real distance -- the question somebody glancing across
+     a room is asking is "how much headroom is left", and a category chip
+     cannot answer it. Every span, name and colour comes off the wire. */
+  .rail{position:relative;height:20px;margin:16px 0 2px}
+  .railTrack{position:absolute;left:0;right:0;top:9px;height:8px;display:flex;
+    gap:1px;border-radius:2px;overflow:hidden}
+  .railSeg{display:block;height:100%;flex:1;opacity:.85}
+  .railNeedle{--pos:0%;position:absolute;top:0;left:var(--pos);width:0;height:20px;
+    transition:left .5s cubic-bezier(.22,.61,.36,1)}
+  .railNeedle::before{content:"";position:absolute;left:-1px;top:3px;width:2px;height:17px;
+    background:var(--text);box-shadow:0 0 0 1.5px var(--bg)}
+  .railNeedle::after{content:"";position:absolute;left:-4px;top:0;width:0;height:0;
+    border-left:4px solid transparent;border-right:4px solid transparent;
+    border-top:5px solid var(--text)}
+
+  .status{border-radius:2px;padding:10px 12px;margin-bottom:12px;font-size:13px;
+    border:1px solid var(--line);border-left:3px solid var(--edge);background:var(--panel2)}
+  .status b{display:block;font:600 10.5px/1.5 var(--mono);text-transform:uppercase;
+    letter-spacing:.12em;margin-bottom:3px;color:var(--dim)}
+  .st-active{border-color:#a5502a;border-left-color:var(--poor);background:#241510}
+  .st-active b{color:var(--poor)}
+  .st-clear{border-color:#2f5c34;border-left-color:var(--vgood);background:#121c10}
+  .st-clear b{color:var(--vgood)}
+
+  table.avg{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;
+    font-family:var(--mono)}
+  table.avg th{font-size:9.5px;text-transform:uppercase;letter-spacing:.12em;color:var(--faint);
+    font-weight:600;padding:0 0 7px;text-align:center}
+  table.avg td{text-align:center;font-size:21px;font-weight:600;padding:5px 2px;border-radius:2px}
+  table.avg td small{display:block;font-size:9.5px;font-weight:400;color:var(--faint);margin-top:2px}
+  .hl{background:var(--panel2);outline:1px solid var(--line)}
+
+  .chartwrap{position:relative;height:300px}
+  .chartwrap.sm{height:150px}
+  .row{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;align-items:center}
+  button,select{background:var(--panel2);color:var(--text);border:1px solid var(--line);
+    border-radius:2px;padding:6px 11px;font:12px/1.4 var(--mono);cursor:pointer;
+    transition:border-color .15s,color .15s,background .15s}
+  button:hover,select:hover{border-color:var(--edge);color:#fff}
+  button.pri{background:var(--accent2);border-color:var(--accent);color:var(--accent);font-weight:600}
+  button.pri:hover{background:var(--accent);color:#08191c}
+  button.on{border-color:var(--accent);color:var(--accent);background:var(--accent2)}
+  /* Only shown where a key really is bound, so the hint can never be a lie. */
+  button .k{color:var(--faint);margin-left:6px;font-size:10px}
+  button.on .k,button:hover .k{color:inherit;opacity:.7}
+
+  .legend{margin-top:12px;font-family:var(--mono);font-size:10.5px;color:var(--dim)}
+  .legendRail{display:flex;gap:1px;height:6px;border-radius:2px;overflow:hidden;margin-bottom:9px}
+  .railKeys{display:flex;flex-wrap:wrap;gap:5px 16px}
+  .railKeys span{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+  .legend i{display:inline-block;width:8px;height:8px;border-radius:1px;flex:none}
+
+  .stat{display:flex;justify-content:space-between;gap:12px;padding:5px 0;
+    border-bottom:1px solid var(--line);font-size:12px}
+  .stat:last-child{border-bottom:0}
+  .stat span:first-child{color:var(--dim)}
+  .stat span:last-child{font-family:var(--mono);font-variant-numeric:tabular-nums;
+    font-weight:600;text-align:right}
+  .note{font-size:11.5px;color:var(--faint);margin-top:10px;line-height:1.55}
+  .note code,.note kbd{font-family:var(--mono);font-size:11px;background:var(--panel2);
+    padding:1px 5px;border-radius:2px;color:var(--dim)}
+
+  table.days{width:100%;border-collapse:collapse;font-size:12px;font-family:var(--mono);
+    font-variant-numeric:tabular-nums}
+  table.days th{text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.12em;
+    color:var(--faint);font-weight:600;padding:0 6px 7px 0}
+  table.days td{padding:5px 6px 5px 0;border-top:1px solid var(--line)}
+  table.days td.n{text-align:right;font-weight:600}
+
+  /* How the headline number was derived. Small and always present rather
+     than behind a toggle: the question it answers ("48 of what, from where?")
+     is asked once by every new reader, and an explanation you have to find is
+     one most people never see. */
+  /* Verbose output, on purpose. A good command-line tool answers "where did
+     that come from?" by printing its working, and this page already knows
+     the whole derivation -- so it is set like output, in a gutter, rather
+     than hidden behind a disclosure nobody opens. */
+  .explain{margin-top:15px;padding-left:12px;border-left:1px solid var(--line);
+    font:11px/1.7 var(--mono);color:var(--faint);font-variant-numeric:tabular-nums}
+  .explain b{color:var(--text);font-weight:600}
+  .explain div{margin-top:.1rem}
+  /* The working, but never louder than the answer above it. */
+  .explain div:nth-child(2){color:var(--dim)}
+
+  /* Inside against outside. Two failure modes with opposite remedies, so the
+     verdict is a sentence rather than a number — a ratio on its own leaves the
+     reader to infer which one, and inferring it wrongly means opening a window
+     during a smoke event. */
+  .inoutVerdict{font:600 1.05rem/1.4 var(--sans);margin:.3rem 0}
+  .inoutAdvice{margin:.35rem 0;line-height:1.55}
+  .inoutBasis{font:11.5px/1.6 var(--mono);color:var(--dim);margin-top:.6rem;
+    padding-left:11px;border-left:1px solid var(--line)}
+  .inoutVerdict.good{color:var(--good)}
+  .inoutVerdict.warn{color:var(--fair)}
+
+  /* evening-window heatmap */
+  #hmWrap{overflow-x:auto}
+  table.hm{border-collapse:separate;border-spacing:2px;font-family:var(--mono);
+    font-variant-numeric:tabular-nums}
+  table.hm th{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--faint);
+    font-weight:600;padding:0 2px 5px;text-align:center;white-space:nowrap}
+  table.hm th.rowlab{text-align:right;padding-right:8px;text-transform:none;letter-spacing:0;
+    font-size:11px;color:var(--dim)}
+  table.hm td{width:42px;height:25px;text-align:center;font-size:11px;font-weight:700;
+    border-radius:2px;color:#0c0f13;cursor:default;
+    transition:box-shadow .12s ease,transform .12s ease}
+  /* A cell you are pointing at lifts out of its row, because the comparison
+     this grid is for is across a row and down a column at once. */
+  table.hm td:hover{box-shadow:0 0 0 1.5px var(--text);position:relative;z-index:1}
+  table.hm td.empty{background:var(--panel2);color:var(--faint);font-weight:400}
+  table.hm td.agg{background:transparent!important;font-weight:700;font-size:12px;border:1px solid var(--line)}
+  table.hm tr.today th.rowlab{color:var(--accent);font-weight:700}
+
+  .banner{border:1px solid #8a6d1f;border-left:3px solid var(--fair);background:#221d10;
+    border-radius:2px;padding:11px 13px;font-size:12.5px;margin-bottom:14px;
+    line-height:1.6;display:none;animation:settle .3s ease-out}
+  .banner code{font-family:var(--mono);font-size:11.5px;background:rgba(0,0,0,.35);
+    padding:1px 5px;border-radius:2px}
+  @keyframes settle{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--vgood);
+    margin-right:6px;vertical-align:1px}
+  .dot.bad{background:var(--poor)}
+
+  /* when the server is unreachable, visibly de-emphasise the stale figures so they
+     can't be mistaken for a live reading */
+  body.disconnected .bignum,
+  body.disconnected table.avg,
+  body.disconnected .chartwrap,
+  body.disconnected #hmWrap{opacity:.4;filter:saturate(.5)}
+
+  /* multi-source panel. Instrument rows: everything measured is mono and
+     right-aligned so two sensors can be compared down a column at a glance,
+     which is the entire reason more than one is read. */
+  .srcTable{width:100%;border-collapse:collapse;margin-top:2px;font-family:var(--mono)}
+  .srcTable th,.srcTable td{padding:7px 6px;border-bottom:1px solid var(--line);
+    font-size:12.5px;text-align:left}
+  .srcTable th{color:var(--faint);font-weight:600;font-size:9.5px;
+    text-transform:uppercase;letter-spacing:.12em}
+  .srcTable td.num,.srcTable th.num{text-align:right;
+    font-variant-numeric:tabular-nums}
+  .srcTable tbody tr{transition:background .12s ease}
+  .srcTable tbody tr:hover{background:var(--panel2)}
+  .srcTable tr.srcStale td{opacity:.45}
+  .srcDot{display:inline-block;width:8px;height:8px;border-radius:50%;
+    margin-right:8px;vertical-align:middle}
+  .srcTag{font-size:9.5px;padding:1px 6px;border-radius:2px;margin-left:6px;
+    background:var(--line);color:var(--dim);vertical-align:middle;
+    text-transform:uppercase;letter-spacing:.08em}
+  .srcTag.head{background:var(--vgood);color:#06240a;font-weight:700}
+  .srcWarn{color:var(--fair);font-size:12.5px;margin:8px 0;font-family:var(--sans)}
+  .srcAttr{color:var(--faint);font-size:11px;margin-top:11px;font-family:var(--sans)}
+  .srcAlert{background:rgba(226,112,58,.1);border-left:3px solid var(--poor);
+    padding:9px 12px;border-radius:2px;margin:8px 0;font-size:13px}
+  .srcAlertSub{color:var(--faint);font-size:12px}
+  .srcTag.warn{background:var(--fair);color:#2b1a05;font-weight:700}
+  .srcTag.bad{background:var(--poor);color:#2b0f05;font-weight:700}
+  .srcNoteRow td{color:var(--faint);font-size:11.5px;padding-top:0;
+    font-family:var(--sans);border-bottom:1px solid var(--line)}
+  .hint{color:var(--faint);font-weight:400;font-size:11px}
+  .netNote{color:var(--faint);font-size:11px;margin-top:3px;max-width:380px;
+    font-family:var(--sans)}
+  .netReady{color:var(--vgood);font-size:12px}
+  .netHow{color:var(--faint);font-size:11.5px;margin-top:11px;font-family:var(--sans)}
+  .netHow code{font-family:var(--mono);background:var(--panel2);padding:1px 5px;border-radius:2px}
+  #networksPanel a{color:var(--accent)}
+
+  /* The legal surface. Set in the reading face at full contrast for its
+     size -- it is the one block on the page that must never look like
+     small print somebody was meant to skip. */
+  .foot{font-size:11.5px;color:var(--dim);line-height:1.65;margin:0}
+  .foot a{color:var(--accent)}
+
+  /* Nearly animated: a value settling, a panel arriving. Nothing loops and
+     nothing moves on its own. Turned off entirely where the reader has
+     asked for that. */
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;
+      transition-duration:.01ms!important;scroll-behavior:auto!important}
+  }
+</style>
+</head>
+<body>
+
+<!-- The status line. Every cell is a machine fact the reader would otherwise
+     have to go looking for: what standard the numbers are on, whether the
+     agent is alive, what time it is here, and which keys do something. The
+     keys are advertised only because they are bound further down. -->
+<header class="bar">
+  <h1>Airo<span id="locName"></span></h1>
+  <span class="cell" id="scaleName"></span>
+  <span class="cell" id="feedState"><span class="dot"></span><span id="feedTxt">connecting…</span></span>
+  <span class="cell" id="clock"></span>
+  <span class="spacer"></span>
+  <span class="keys">
+    <a class="key" href="#" id="kbRefresh"><kbd>r</kbd>refresh</a>
+    <a href="/settings" class="key settingsLink"><kbd>s</kbd>settings</a>
+  </span>
+</header>
+
+<div class="page">
+
+<div class="banner" id="banner"></div>
+
+<div class="grid">
+  <div>
+    <div class="card">
+      <div class="hero">
+        <div class="heroRead">
+          <div class="bignum" id="big">—</div>
+          <div class="heroMeta">
+            <div class="band" id="bandLabel" style="background:var(--faint)">no data</div>
+            <div class="ugm" id="ugm"></div>
+            <div class="trend" id="trend"></div>
+          </div>
+        </div>
+        <!-- The rail is filled by paintScaleRail() from the served band
+             table. Empty here on purpose: a band name or a boundary written
+             into markup is the second copy that test_scales.py exists to
+             stop, and adoptBands() cannot reach markup. -->
+        <div class="rail" id="scaleRail" aria-hidden="true">
+          <span class="railTrack" id="railTrack"></span>
+          <span class="railNeedle" id="railNeedle"></span>
+        </div>
+        <div class="explain" id="explain"></div>
+      </div>
+
+      <div class="status" id="status"><b>Window</b><span id="statusTxt">…</span></div>
+
+      <h2>Rolling averages <em>— from the sensor itself</em></h2>
+      <table class="avg">
+        <thead><tr><th>Now</th><th>10 min</th><th>30 min</th><th>1 hr</th><th>6 hr</th><th>1 day</th><th>Week</th></tr></thead>
+        <tbody><tr>
+          <td id="a_now">—</td><td id="a_10m">—</td><td id="a_30m">—</td>
+          <td id="a_1h">—</td><td class="hl" id="a_6h">—</td><td class="hl" id="a_1d">—</td><td id="a_wk">—</td>
+        </tr></tbody>
+      </table>
+      <div class="note">A low <em>Now</em> beside a high <em>6 hr</em> means you've just come through an episode.</div>
+    </div>
+
+    <div class="card" id="sourcesPanel" style="display:none"></div>
+
+    <div class="card" id="networksPanel" style="display:none"></div>
+
+    <div class="card">
+      <div class="card" id="inout" style="display:none">
+        <h2>Inside against outside <em id="inoutWindow"></em></h2>
+        <div class="inoutVerdict" id="inoutVerdict"></div>
+        <div class="inoutAdvice" id="inoutAdvice"></div>
+        <div class="inoutBasis" id="inoutBasis"></div>
+      </div>
+
+      <h2>History <em id="riskCaption"></em></h2>
+      <div class="chartwrap"><canvas id="chart"></canvas></div>
+      <!-- Filled by renderLegend() from the served band table. It was five
+           hand-written Australian rows, so a us_epa install recoloured the
+           chart and left the key underneath it reading the wrong standard --
+           and on AU it stopped at Very poor, leaving Hazardous unnamed. -->
+      <div class="legend" id="legend"></div>
+      <div class="row">
+        <button class="pri" id="btnRefresh">Refresh</button>
+        <button class="rng on" data-h="24" data-key="1">24 h<span class="k">1</span></button>
+        <button class="rng" data-h="72" data-key="2">3 days<span class="k">2</span></button>
+        <button class="rng" data-h="168" data-key="3">7 days<span class="k">3</span></button>
+        <button class="rng" data-h="0" data-key="4">All<span class="k">4</span></button>
+        <button id="btnJson">Download JSON</button>
+        <label class="note" style="margin:0">sensor
+          <select id="srcPick" style="margin-left:.35rem"></select>
+        </label>
+        <span class="note" style="margin:0" id="rowCount"></span>
+      </div>
+      <div class="note" style="margin-top:8px">
+        <span id="pollInfo"></span>
+        <span style="opacity:.7"> — the interval is set by <code>poll_minutes</code> in <code>config.json</code>;
+        change it and restart the agent. Polling is done by the background agent, so it continues
+        with this page closed.</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Evening window by night <em id="hmCaption"></em></h2>
+      <div id="hmWrap"></div>
+      <div class="row">
+        <button class="hmr on" data-d="7">7 nights</button>
+        <button class="hmr" data-d="14">14 nights</button>
+        <button class="hmr" data-d="30">30 nights</button>
+        <button class="hmr" data-d="0">All</button>
+        <span class="note" style="margin:0" id="hmColourNote">Rows are nights, columns are hours.</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Evening premium by day <em id="premCaption"></em></h2>
+      <div class="chartwrap sm"><canvas id="chartDays"></canvas></div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2>Logged data</h2>
+      <div class="stat"><span>Readings on disk</span><span id="s_rows">—</span></div>
+      <div class="stat"><span>First reading</span><span id="s_first">—</span></div>
+      <div class="stat"><span>Last reading</span><span id="s_last">—</span></div>
+      <div class="stat"><span>Active sources</span><span id="s_bf">—</span></div>
+      <!-- Shown only where this install actually holds weather. Filled, with
+           its attribution, by renderRecordStats(). -->
+      <div class="stat" id="wxRow" style="display:none"><span>Weather record</span><span id="s_wx">—</span></div>
+      <div class="note" id="wxAttrib" style="display:none"></div>
+      <div class="note" style="margin-top:8px">Stored in <code id="dbPath">the data directory</code> by the background agent, whether or not this page is open. Export plain CSV with <code>python3 poller.py --export</code>.</div>
+    </div>
+
+    <div class="card">
+      <h2>Today</h2>
+      <div class="stat"><span>Peak</span><span id="s_max">—</span></div>
+      <div class="stat"><span>Peak time</span><span id="s_maxt">—</span></div>
+      <div class="stat"><span>Low</span><span id="s_min">—</span></div>
+      <div class="stat"><span id="s_eveLabel">Evening mean</span><span id="s_eve">—</span></div>
+      <div class="stat"><span>Daytime mean</span><span id="s_day">—</span></div>
+      <div class="stat"><span>Evening premium</span><span id="s_prem">—</span></div>
+    </div>
+
+    <div class="card">
+      <h2>Worst nights logged</h2>
+      <table class="days"><thead><tr><th>Night</th><th style="text-align:right">Peak</th><th style="text-align:right">Eve mean</th><th style="text-align:right">Ratio</th></tr></thead>
+      <tbody id="worst"><tr><td colspan="4" style="border:0;color:var(--faint)">Building history…</td></tr></tbody></table>
+    </div>
+  </div>
+</div>
+
+<div class="card" style="margin-top:12px">
+  <div class="foot">
+    <!-- Filled from latest.json's attributions. Hard-coding PurpleAir here
+         credited a network a Queensland-only user does not use, and buried
+         the CC BY notice they actually owe. Same fault that retired the
+         SwiftBar plugin. -->
+    <span id="footAttrib"></span>
+    <span id="footTerms"></span>
+    Not a medical device and not medical advice. Optical sensors over-read at high humidity and
+    can fail in ways that resemble real data. Do not use for health or safety-critical decisions.
+  </div>
+</div>
+
+</div>
+
+<script>
+/* ---------------------------------------------------------------------------
+   Minimal canvas charting — replaces Chart.js.
+
+   Why this exists rather than a CDN tag:
+
+   1. Privacy. The dashboard renders your home's coordinates. Fetching a script
+      from a CDN told that CDN your IP address every time you opened it, which
+      is a location leak from a tool whose whole point is keeping the data local.
+   2. Supply chain. A `<script src>` to a third party is arbitrary code with
+      full access to that page. Nothing about a local air-quality logger
+      justifies that exposure.
+   3. Offline. A local logger that cannot draw its own local data without an
+      internet connection is broken by design.
+   4. The zero-dependency rule. The Python side is enforced in CI; the browser
+      side quietly wasn't.
+
+   It implements only what the two charts here actually use. The existing
+   drawing plugins do their own canvas work through `getPixelForValue` and
+   `chartArea`, so they were kept verbatim -- this supplies the same surface:
+
+     new Chart(canvas, {type, data, options, plugins})
+     .data .options .update() .ctx .chartArea .scales.x/.y .tooltip
+
+   Deliberately absent: animation, legends, stacking, multiple axes, every
+   chart type but line and bar. Add them if a chart ever needs them; do not
+   add them speculatively.
+--------------------------------------------------------------------------- */
+const Chart = (function(){
+
+  const dpr = () => window.devicePixelRatio || 1;
+
+  function niceTicks(min, max, target){
+    if(!(max > min)) return [{value:min}];
+    const raw = (max - min) / Math.max(1, target);
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const norm = raw / mag;
+    const step = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag;
+    const out = [];
+    for(let v = Math.ceil(min/step)*step; v <= max + 1e-9 && out.length < 200; v += step)
+      out.push({value: +v.toFixed(10)});
+    return out;
+  }
+
+  class Scale {
+    constructor(id, opts){ this.id = id; this.options = opts || {}; this.ticks = []; }
+    getPixelForValue(v){
+      if(this.max === this.min) return this._p0;
+      const f = (v - this.min) / (this.max - this.min);
+      return this._p0 + f * (this._p1 - this._p0);
+    }
+    getValueForPixel(p){
+      if(this._p1 === this._p0) return this.min;
+      return this.min + (p - this._p0) / (this._p1 - this._p0) * (this.max - this.min);
+    }
+  }
+
+  class Chart {
+    constructor(canvas, cfg){
+      this.canvas = canvas;
+      this.ctx = canvas.getContext('2d');
+      this.type = cfg.type;
+      this.data = cfg.data;
+      this.options = cfg.options || {};
+      this.plugins = cfg.plugins || [];
+      this.scales = {x: new Scale('x'), y: new Scale('y')};
+      this.chartArea = {left:0, right:0, top:0, bottom:0};
+      this._active = [];
+      this._points = [];
+
+      this._onMove = e => {
+        const r = this.canvas.getBoundingClientRect();
+        this._hover(e.clientX - r.left, e.clientY - r.top);
+      };
+      this._onLeave = () => { if(this._active.length){ this._active = []; this.draw(); } };
+      canvas.addEventListener('mousemove', this._onMove);
+      canvas.addEventListener('mouseleave', this._onLeave);
+
+      this._tip = document.createElement('div');
+      this._tip.style.cssText =
+        'position:absolute;pointer-events:none;z-index:50;display:none;' +
+        'background:rgba(12,16,22,.94);color:#e8edf4;border:1px solid #2c3543;' +
+        'border-radius:6px;padding:9px 11px;font:12px -apple-system,system-ui,sans-serif;' +
+        'line-height:1.45;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.45)';
+      document.body.appendChild(this._tip);
+
+      this.tooltip = {getActiveElements: () => this._active};
+
+      this._ro = new ResizeObserver(() => this.draw());
+      this._ro.observe(canvas.parentElement || canvas);
+      this.draw();
+    }
+
+    update(){ this.draw(); }
+
+    destroy(){
+      this.canvas.removeEventListener('mousemove', this._onMove);
+      this.canvas.removeEventListener('mouseleave', this._onLeave);
+      this._ro.disconnect();
+      this._tip.remove();
+    }
+
+    /* ---- geometry ------------------------------------------------------- */
+
+    _resize(){
+      const parent = this.canvas.parentElement;
+      const w = Math.max(80, (parent ? parent.clientWidth : this.canvas.clientWidth) || 300);
+      const h = Math.max(60, (parent ? parent.clientHeight : this.canvas.clientHeight) || 200);
+      const r = dpr();
+      if(this.canvas.width !== Math.round(w*r) || this.canvas.height !== Math.round(h*r)){
+        this.canvas.width = Math.round(w*r);
+        this.canvas.height = Math.round(h*r);
+      }
+      this.canvas.style.width = w + 'px';
+      this.canvas.style.height = h + 'px';
+      this.ctx.setTransform(r, 0, 0, r, 0, 0);
+      this._w = w; this._h = h;
+    }
+
+    _bounds(){
+      const ds = this.data.datasets[0] || {data: []};
+      const pts = ds.data || [];
+      const xo = this.options.scales?.x || {}, yo = this.options.scales?.y || {};
+      const x = this.scales.x, y = this.scales.y;
+      x.options = xo; y.options = yo;
+
+      if(this.type === 'bar'){
+        // Categorical: one slot per label, values centred in their slot.
+        x.min = -0.5;
+        x.max = (this.data.labels || []).length - 0.5;
+        if(x.max < x.min) x.max = x.min + 1;
+      } else {
+        const xs = pts.map(p => p.x);
+        x.min = xo.min ?? (xs.length ? Math.min(...xs) : 0);
+        x.max = xo.max ?? (xs.length ? Math.max(...xs) : 1);
+        if(x.max === x.min){
+          // One reading collapses the domain, which pinned the only point to
+          // the left edge, half clipped. Pad an hour either side so it sits
+          // centred and the axis still reads as a timeline.
+          const pad = 60*60*1000;
+          x.min -= pad; x.max += pad;
+        }
+      }
+
+      const vals = (this.type === 'bar' ? pts : pts.map(p => p.y))
+        .filter(v => v != null && isFinite(v));
+      y.min = yo.min ?? (yo.beginAtZero ? 0 : (vals.length ? Math.min(...vals) : 0));
+      y.max = yo.max ?? (vals.length ? Math.max(...vals) : 1);
+      if(yo.beginAtZero) y.min = Math.min(0, y.min);
+      if(y.max === y.min) y.max = y.min + 1;
+    }
+
+    _buildTicks(){
+      const x = this.scales.x, y = this.scales.y;
+      const xo = x.options, yo = y.options;
+
+      if(this.type === 'bar'){
+        x.ticks = (this.data.labels || []).map((l, i) => ({value: i, label: l}));
+      } else if(typeof xo.afterBuildTicks === 'function'){
+        // The time axis generates its own ticks on calendar boundaries; a
+        // linear step would drift across DST. See ARCHITECTURE 3.
+        // buildTimeTicks assigns scale.ticks in place and returns nothing,
+        // which is how Chart.js's hook works. Honour both conventions.
+        x.ticks = [];
+        const ret = xo.afterBuildTicks(x);
+        if(Array.isArray(ret)) x.ticks = ret;
+      } else {
+        x.ticks = niceTicks(x.min, x.max, 8);
+      }
+      const cb = xo.ticks?.callback;
+      for(const t of x.ticks) if(t.label === undefined)
+        t.label = cb ? cb(t.value) : String(t.value);
+
+      y.ticks = niceTicks(y.min, y.max, 6);
+      const ycb = yo.ticks?.callback;
+      for(const t of y.ticks)
+        t.label = ycb ? ycb(t.value) : String(Math.round(t.value * 100) / 100);
+    }
+
+    _layout(){
+      const ctx = this.ctx;
+      const yFont = this.scales.y.options.ticks?.font?.size || 10;
+      ctx.font = `${yFont}px -apple-system,system-ui,sans-serif`;
+      let widest = 0;
+      for(const t of this.scales.y.ticks) widest = Math.max(widest, ctx.measureText(t.label).width);
+      const a = this.chartArea;
+      a.left = Math.ceil(widest) + 10;
+      a.right = this._w - 8;
+      a.top = 8;
+      a.bottom = this._h - 22;
+      this.scales.x._p0 = a.left; this.scales.x._p1 = a.right;
+      this.scales.y._p0 = a.bottom; this.scales.y._p1 = a.top;
+    }
+
+    /* ---- drawing -------------------------------------------------------- */
+
+    draw(){
+      this._resize();
+      this._bounds();
+      this._buildTicks();
+      this._layout();
+
+      const ctx = this.ctx, a = this.chartArea;
+      ctx.clearRect(0, 0, this._w, this._h);
+
+      this._drawGrid();
+      for(const p of this.plugins) p.beforeDatasetsDraw?.(this);
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(a.left, a.top, a.right - a.left, a.bottom - a.top);
+      ctx.clip();
+      if(this.type === 'bar') this._drawBars(); else this._drawLine();
+      ctx.restore();
+
+      this._drawTickLabels();
+      for(const p of this.plugins) p.afterDatasetsDraw?.(this);
+      this._drawTooltip();
+    }
+
+    _drawGrid(){
+      const ctx = this.ctx, a = this.chartArea;
+      const x = this.scales.x, y = this.scales.y;
+      ctx.save();
+      ctx.lineWidth = 1;
+      if(x.options.grid?.display !== false && x.options.grid?.color){
+        ctx.strokeStyle = x.options.grid.color;
+        for(const t of x.ticks){
+          const px = Math.round(x.getPixelForValue(t.value)) + .5;
+          if(px < a.left || px > a.right) continue;
+          ctx.beginPath(); ctx.moveTo(px, a.top); ctx.lineTo(px, a.bottom); ctx.stroke();
+        }
+      }
+      if(y.options.grid?.display !== false && y.options.grid?.color){
+        ctx.strokeStyle = y.options.grid.color;
+        for(const t of y.ticks){
+          const py = Math.round(y.getPixelForValue(t.value)) + .5;
+          ctx.beginPath(); ctx.moveTo(a.left, py); ctx.lineTo(a.right, py); ctx.stroke();
+        }
+      }
+      ctx.restore();
+    }
+
+    _drawTickLabels(){
+      const ctx = this.ctx, a = this.chartArea;
+      const x = this.scales.x, y = this.scales.y;
+      ctx.save();
+
+      ctx.fillStyle = y.options.ticks?.color || '#888';
+      ctx.font = `${y.options.ticks?.font?.size || 10}px -apple-system,system-ui,sans-serif`;
+      ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+      for(const t of y.ticks) ctx.fillText(t.label, a.left - 6, y.getPixelForValue(t.value));
+
+      ctx.fillStyle = x.options.ticks?.color || '#888';
+      ctx.font = `${x.options.ticks?.font?.size || 10}px -apple-system,system-ui,sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      // Skip labels that would collide rather than overprinting them.
+      const pad = x.options.ticks?.autoSkipPadding ?? 6;
+      let lastRight = -Infinity;
+      for(const t of x.ticks){
+        const px = x.getPixelForValue(t.value);
+        if(px < a.left - 2 || px > a.right + 2) continue;
+        const w = ctx.measureText(t.label).width;
+        if(px - w/2 < lastRight + pad) continue;
+        // Keep the label inside the canvas. Centred on the tick, the last one
+        // ran off the right edge and rendered as "14:0".
+        const cx = Math.min(Math.max(px, w/2 + 1), this._w - w/2 - 1);
+        lastRight = cx + w/2;
+        ctx.fillText(t.label, cx, a.bottom + 6);
+      }
+      ctx.restore();
+    }
+
+    _drawLine(){
+      const ctx = this.ctx, a = this.chartArea;
+      const ds = this.data.datasets[0];
+      const pts = (ds.data || []).filter(p => p && p.y != null && isFinite(p.y));
+      if(!pts.length){ this._points = []; return; }
+
+      const x = this.scales.x, y = this.scales.y;
+      // A value above the axis is pinned to the top edge and remembered as
+      // such. Without this the line leaves the plot entirely: one reading of
+      // 900 µg/m³ draws a spike off the top of the canvas and, if the axis
+      // were stretched to contain it instead, squashes an ordinary week into
+      // a flat line along the bottom. Pinned and marked keeps both readable —
+      // the shape of the week, and the fact that something went off the scale.
+      // The true value still reaches the tooltip, because `raw` is untouched.
+      this._points = pts.map((p, i) => {
+        const over = p.y > y.max;
+        return {x: x.getPixelForValue(p.x),
+                y: y.getPixelForValue(over ? y.max : p.y),
+                over, index: i, raw: p};
+      });
+
+      if(ds.fill){
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(this._points[0].x, a.bottom);
+        for(const p of this._points) ctx.lineTo(p.x, p.y);
+        ctx.lineTo(this._points[this._points.length-1].x, a.bottom);
+        ctx.closePath();
+        ctx.fillStyle = ds.fill.above || 'rgba(255,255,255,.045)';
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // Per-segment colour: severity is readable straight off the line.
+      ctx.save();
+      ctx.lineWidth = ds.borderWidth ?? 2;
+      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      const segColour = ds.segment?.borderColor;
+      for(let i = 1; i < this._points.length; i++){
+        const p0 = this._points[i-1], p1 = this._points[i];
+        ctx.strokeStyle = segColour
+          ? segColour({p0: {parsed: p0.raw}, p1: {parsed: p1.raw}})
+          : (ds.borderColor || '#6cf');
+        ctx.beginPath(); ctx.moveTo(p0.x, p0.y); ctx.lineTo(p1.x, p1.y); ctx.stroke();
+      }
+      ctx.restore();
+
+      // Anything pinned to the top gets a marker, so a flat run along the
+      // ceiling cannot be mistaken for a flat run of that value. A triangle
+      // rather than a dot: it points off the scale, which is what happened.
+      const off = this._points.filter(p => p.over);
+      if(off.length){
+        ctx.save();
+        ctx.fillStyle = cssVar('--poor') || '#e4572e';
+        for(const p of off){
+          ctx.beginPath();
+          ctx.moveTo(p.x, p.y - 7);
+          ctx.lineTo(p.x - 5, p.y + 1);
+          ctx.lineTo(p.x + 5, p.y + 1);
+          ctx.closePath(); ctx.fill();
+        }
+        ctx.restore();
+      }
+
+      // A single reading draws no segment, so the chart looked empty on a
+      // fresh install -- the one moment a user most needs to see that it
+      // worked. Draw the points themselves when there are too few to line up.
+      if(this._points.length <= 2){
+        ctx.save();
+        ctx.fillStyle = ds.borderColor || '#6cf';
+        for(const p of this._points){
+          ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, 0, Math.PI*2); ctx.fill();
+        }
+        ctx.restore();
+      }
+
+      const r = ds.pointHoverRadius ?? 4;
+      for(const act of this._active){
+        const p = this._points[act._i];
+        if(!p) continue;
+        ctx.save();
+        ctx.fillStyle = ds.borderColor || '#6cf';
+        ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI*2);
+        ctx.fill(); ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    _drawBars(){
+      const ctx = this.ctx, a = this.chartArea;
+      const ds = this.data.datasets[0];
+      const vals = ds.data || [];
+      const x = this.scales.x, y = this.scales.y;
+      const slot = (a.right - a.left) / Math.max(1, vals.length);
+      const w = Math.max(1, Math.min(slot * .72, 46));
+      const zero = y.getPixelForValue(Math.max(0, y.min));
+      const cols = Array.isArray(ds.backgroundColor) ? ds.backgroundColor : null;
+      const radius = ds.borderRadius || 0;
+
+      this._points = [];
+      vals.forEach((v, i) => {
+        const cx = x.getPixelForValue(i);
+        this._points.push({x: cx, y: v == null ? zero : y.getPixelForValue(v),
+                           index: i, raw: v, _w: slot});
+        if(v == null || !isFinite(v)) return;
+        const top = y.getPixelForValue(v);
+        const h = Math.abs(zero - top);
+        if(h < .5) return;
+        ctx.save();
+        ctx.fillStyle = cols ? cols[i] : (ds.backgroundColor || '#6cf');
+        ctx.beginPath();
+        if(radius && ctx.roundRect) ctx.roundRect(cx - w/2, Math.min(top, zero), w, h, radius);
+        else ctx.rect(cx - w/2, Math.min(top, zero), w, h);
+        ctx.fill();
+        ctx.restore();
+      });
+    }
+
+    /* ---- interaction ---------------------------------------------------- */
+
+    _hover(mx, my){
+      const a = this.chartArea;
+      const inside = mx >= a.left && mx <= a.right && my >= a.top - 4 && my <= a.bottom + 4;
+      let next = [];
+      if(inside && this._points.length){
+        // Nearest by x, matching Chart.js's {mode:'nearest', intersect:false} --
+        // the y position should not have to be hit for the reading to show.
+        let best = null, bestD = Infinity;
+        for(const p of this._points){
+          const d = Math.abs(p.x - mx);
+          if(d < bestD){ bestD = d; best = p; }
+        }
+        const limit = this.type === 'bar' ? (best?._w ?? 40) / 2 : 40;
+        if(best && bestD <= limit)
+          next = [{element: {x: best.x, y: best.y}, index: best.index, _i: this._points.indexOf(best)}];
+      }
+      const changed = next.length !== this._active.length ||
+                      (next[0] && this._active[0] && next[0].index !== this._active[0].index);
+      this._active = next;
+      if(changed) this.draw();
+    }
+
+    _drawTooltip(){
+      const t = this.options.plugins?.tooltip;
+      if(!this._active.length || t === false){ this._tip.style.display = 'none'; return; }
+      const cb = t?.callbacks || {};
+      const p = this._points[this._active[0]._i];
+      if(!p){ this._tip.style.display = 'none'; return; }
+
+      const parsed = this.type === 'bar'
+        ? {x: p.index, y: p.raw}
+        : {x: p.raw.x, y: p.raw.y};
+      // `raw` is the original data element, as Chart.js provides it. Carried
+      // so a callback can read fields the renderer never looks at -- the
+      // series tooltip uses it to show the measured µg/m³ instead of
+      // converting the index back, which is only valid on a linear scale.
+      const item = {parsed, raw: p.raw, index: p.index, dataIndex: p.index,
+                    label: (this.data.labels || [])[p.index]};
+
+      const title = cb.title ? cb.title([item]) : (item.label ?? '');
+      const body  = cb.label ? cb.label(item) : String(parsed.y);
+      this._tip.innerHTML = (title ? `<b>${title}</b><br>` : '') + body;
+
+      const r = this.canvas.getBoundingClientRect();
+      this._tip.style.display = 'block';
+      const tw = this._tip.offsetWidth, th = this._tip.offsetHeight;
+      let lx = r.left + window.scrollX + p.x + 14;
+      if(lx + tw > window.scrollX + document.documentElement.clientWidth - 8)
+        lx = r.left + window.scrollX + p.x - tw - 14;
+      let ly = r.top + window.scrollY + p.y - th - 10;
+      if(ly < window.scrollY + 4) ly = r.top + window.scrollY + p.y + 16;
+      this._tip.style.left = Math.max(4, lx) + 'px';
+      this._tip.style.top = ly + 'px';
+    }
+  }
+
+  return Chart;
+})();
+
+/* µg/m³ per index point, served by the poller because only it knows which
+   national scale is configured. Null means the scale is piecewise (US EPA) and
+   no single factor exists — in which case the µg figure is omitted rather than
+   approximated.
+
+   This page used to multiply by a hardcoded Australian 25 in three places
+   whatever the scale. A US EPA install saw air of 30 µg/m³ labelled 22.5, and a
+   `raw` install saw 7.5 — understatements on exactly the number a reader
+   checks against a health guideline. Same failure as the band boundaries above,
+   in the sub-label rather than the colour.
+
+   Prefer a served measurement over this wherever one exists: averages_pm25 and
+   each series point carry the real value, and raw µg/m³ is canonical (rule 6).
+   This is for labelling a value that only ever existed as an index. */
+let UG_PER_INDEX = 0.25;
+const ugText = v => (v == null || UG_PER_INDEX == null)
+  ? '' : (v * UG_PER_INDEX).toFixed(1) + ' µg/m³';
+
+/* Six colours, darkest last. Colour only — it is presentation, and the ramp
+   is an honest positional join: every scale the poller serves has six bands
+   in order from cleanest to worst, so slot i is the i-th worst on any of
+   them. The *boundaries* and the *names* are a health-relevant judgement and
+   come from the poller, which knows which national scale is configured.
+
+   This list used to carry an advice sentence per slot, joined to the served
+   bands the same way — and that join was not honest, because a sentence is
+   about a concentration and not about an ordinal. On the raw µg/m³ scale the
+   band "Above WHO guideline" landed in slot 2 and was handed "Enjoy normal
+   activities.", written for an Australian band that stops at 16.5 µg/m³. The
+   sentences now live in poller.py's SCALES beside the bands they were written
+   for, and arrive in the payload or not at all.
+
+   This page used to hold the numbers twice — once here and once in the chart
+   background — and both were the Australian boundaries whatever the user had
+   chosen. A US EPA install read its index against Australian bands. */
+const BAND_CSS = ['--vgood','--good','--fair','--poor','--vpoor','--hazard'];
+
+/* Australian ceilings, used only until the first response arrives. Not a
+   second opinion: replaced by the served table on load, and the page says
+   which scale it is showing.
+
+   No advice here either. The first paint shows a band name and no sentence,
+   which is the same way an advice-less scale renders — a bootstrap that
+   guessed the wording would be a copy of the health text by another name. */
+let BANDS = [33, 66, 99, 149, 200, null].map((max, i) => ({
+  max, name: ['Very good','Good','Fair','Poor','Very poor','Hazardous'][i],
+  css: BAND_CSS[i], advice: ''}));
+
+function adoptBands(served){
+  if(!Array.isArray(served) || !served.length) return;
+  BANDS = served.map((b, i) => ({
+    max: b.max, name: b.name,
+    css: BAND_CSS[Math.min(i, BAND_CSS.length - 1)],
+    // Verbatim, and empty when the server sent none. Not defaulted: a band
+    // whose wording nobody has written yet shows its name alone.
+    advice: b.advice || ''
+  }));
+}
+
+/* The evening risk window, in local hours. Served, like the bands, and for
+   the same reason.
+
+   Cold-air drainage after sunset is a *local* phenomenon, so the window is a
+   setting (`risk_window` in config.json) rather than a fact. This page had 15
+   and 1 written out in about ten places -- the chart shading, the night key,
+   the heatmap's hour columns, the evening/daytime split in today's figures,
+   and three captions reading "3pm–1am". So a user who moved their window got
+   advice about the hours they chose from the menu bar and charts about 3pm
+   from here, with nothing saying the two disagreed.
+
+   `let`, defaulting to the same numbers poller defaults to, so the first
+   paint has a window before api/latest lands -- the same bargain BANDS makes,
+   and replaced the same way. */
+let RISK_START = 15, RISK_END = 1;
+
+function adoptRiskWindow(served){
+  if(!served) return;
+  const s = Number(served.start_hour), e = Number(served.end_hour);
+  // Validated rather than trusted: an out-of-range hour would silently empty
+  // the heatmap's columns, which reads as "no data" rather than as a bad
+  // setting. An older poller sends nothing and keeps the defaults.
+  if(Number.isInteger(s) && s >= 0 && s < 24 &&
+     Number.isInteger(e) && e >= 0 && e < 24){ RISK_START = s; RISK_END = e; }
+}
+
+/* Wrap-aware, because the normal case wraps: 15 to 1 means 3pm until 1am the
+   next day. One that does not wrap is legal too -- a morning inversion is 5
+   to 9 -- and the difference decides whether "the night before" means
+   anything. Same rule as inside() in poller's compute_time_hint(), so the
+   page and the menu bar cannot disagree about whether it is 6pm. */
+const riskWraps   = () => RISK_START > RISK_END;
+const inRiskWindow = h => riskWraps() ? (h >= RISK_START || h < RISK_END)
+                                      : (h >= RISK_START && h < RISK_END);
+
+/* Every hour of the window, in order, starting at RISK_START. The heatmap's
+   columns were a literal [15..23, 0]; this is that list for any window. */
+const eveHours = () => {
+  const out = [];
+  for(let h = RISK_START, n = 0; n < 24 && h !== RISK_END; h = (h + 1) % 24, n++)
+    out.push(h);
+  return out;
+};
+
+/* Which night a reading belongs to. 00:30 is part of the evening before, not
+   of the morning it is technically in -- filing it forward splits every night
+   in two and halves both of its averages. Only a window that crosses midnight
+   rolls over; one that does not has nothing to roll into. */
+const nightOf = d => {
+  const key = new Date(d);
+  if(riskWraps() && d.getHours() < RISK_END) key.setDate(key.getDate() - 1);
+  return key;
+};
+
+/* Rounds before deciding. The band must match the number on screen: 33.2
+   displays as "33" and has to be coloured as 33. This was an instruction to
+   callers -- "use bandFor(Math.round(v))" -- and was followed in one place out
+   of nine. An instruction is a rule that gets broken; rounding here is a rule
+   that cannot be. ARCHITECTURE §3.4. */
+const bandFor = v => BANDS.find(
+  b => b.max == null || Math.round(v) <= b.max) || BANDS[BANDS.length-1];
+const cssVar  = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+let readings = [], latest = null, seriesData = null, rangeH = 24, chart, chartDays;
+
+/* How many polls may be missed before the record is called stale.
+
+   Two would fire on a single skipped poll, which happens whenever a laptop
+   sleeps through one; a banner that cries wolf is one nobody reads on the day
+   it is right. */
+const STALE_INTERVALS = 3;
+
+/* How far past its own schedule the served reading is, or null if it is on
+   time. Scaled to the configured cadence, which is the whole point.
+
+   This was a flat `mins > 45`. Forty-five minutes is three polls only on the
+   default fifteen: `poll_minutes` is a setting, and an hourly poller is older
+   than 45 minutes for most of every *normal* cycle. So the "the background
+   poller may have stopped" banner appeared on almost every visit, on an
+   install where nothing was wrong. Exactly the mistake CONVENTIONS already
+   records for gap thresholds — a fixed 25 minutes that fired on every poll
+   against an hourly feed — repeated on the surface the user actually reads.
+
+   `nowMs` is an argument so this can be asked about a specific moment rather
+   than only about now. On a default install the answer is unchanged: 15 x 3
+   is the 45 it replaces. */
+function overdueMinutes(view, nowMs){
+  if(!view || !view.fetched_utc) return null;
+  const at = nowMs === undefined ? Date.now() : nowMs;
+  const mins = (at - new Date(view.fetched_utc).getTime())/60000;
+  const every = view.poll_minutes || 15;
+  return mins > every * STALE_INTERVALS ? mins : null;
+}
+
+/* ---------------- data loading ---------------- */
+/* Inside against outside.
+ *
+ * Fetched separately and never blocking the rest: it reads a week of history,
+ * and an install with no indoor sensor has nothing to show — a panel that is
+ * absent is better than one that is empty, and neither should be able to stop
+ * the reading from rendering.
+ *
+ * Every word of the verdict comes from the server. Two failure modes with
+ * opposite remedies live here, and deciding between them in a renderer is
+ * exactly what rule 7 forbids: a page that got it backwards would tell
+ * somebody to open a window during a smoke event.
+ */
+async function drawInsideOutside(){
+  const card = document.getElementById('inout');
+  if(!card) return;
+  let found;
+  try{
+    const r = await fetch('api/indoor?t='+Date.now());
+    if(!r.ok) { card.style.display='none'; return; }
+    found = await r.json();
+  }catch(e){ card.style.display='none'; return; }
+
+  const verdict = document.getElementById('inoutVerdict');
+  const advice  = document.getElementById('inoutAdvice');
+  const basis   = document.getElementById('inoutBasis');
+  const window_ = document.getElementById('inoutWindow');
+
+  if(!found || (!found.verdict && !found.why)){ card.style.display='none'; return; }
+  card.style.display = '';
+
+  if(!found.verdict){
+    // Silence with a reason, which is an answer. Hiding the panel here would
+    // leave somebody who added an indoor sensor wondering whether it worked.
+    verdict.className = 'inoutVerdict';
+    verdict.textContent = 'Not enough to say yet';
+    advice.textContent = found.why || '';
+    basis.textContent = '';
+    window_.textContent = '';
+    return;
+  }
+
+  const wording = {
+    'holding': ['Holding', 'good'],
+    'outdoor air getting in': ['Outdoor air is getting in', 'warn'],
+    'indoor source': ['Something inside is producing particulates', 'warn']
+  }[found.verdict] || [found.verdict, ''];
+
+  verdict.className = 'inoutVerdict ' + wording[1];
+  verdict.textContent = wording[0];
+  advice.textContent = found.advice || '';
+  basis.textContent = found.basis || '';
+  window_.textContent = '— last ' + plural(found.days, 'day');
+}
+
+
+async function loadData(){
+  const ok = (a,b)=>{ const el=document.getElementById('feedState');
+    el.querySelector('.dot').className = 'dot' + (a?'':' bad');
+    document.getElementById('feedTxt').textContent = b; };
+
+  try{
+    // v0.5: the store is SQLite and there may be several sources, so the
+    // dashboard reads a JSON API rather than re-parsing the whole CSV in the
+    // browser every minute (ROADMAP #F).
+    const [jr, sr] = await Promise.all([
+      fetch('api/latest?t='+Date.now()),
+      fetch('api/series?days=400&bucket=10&t='+Date.now())
+    ]);
+    if(jr.ok) latest = await jr.json();
+    if(sr.ok){ seriesData = await sr.json(); readings = primarySeries(seriesData, latest); }
+    // Take the boundaries from whichever response carried them. The poller
+    // knows which national scale is configured; this page must not guess.
+    adoptBands((latest && latest.bands) || (seriesData && seriesData.bands));
+    // Same reasoning, same source of truth: the hours are a setting, and the
+    // server is the only thing that has read the config.
+    adoptRiskWindow(latest && latest.risk_window);
+    // Same reasoning as the bands: the server knows the configured scale, so
+    // it decides whether an index can be converted to µg/m³ at all. undefined
+    // (an older poller) keeps the Australian default; an explicit null means
+    // the scale is piecewise and the figure must be omitted.
+    if(latest && latest.ug_per_index !== undefined) UG_PER_INDEX = latest.ug_per_index;
+    // The whole record, not the series this page happens to be holding --
+    // the same figure, from the same served total, as the "Readings on disk"
+    // panel. The status line used to count the primary series, so picking a
+    // second sensor in the chart changed how many readings the instrument
+    // claimed to have ever taken. That is the fault renderRecordStats()
+    // documents, in the one place it had not been fixed.
+    const held = (latest && latest.record && latest.record.readings_total != null)
+      ? latest.record.readings_total : readings.length;
+    ok(true, 'agent live · ' + plural(held, 'reading'));
+    document.getElementById('banner').style.display = 'none';
+    drawInsideOutside();
+  }catch(e){
+    ok(false, 'server not responding');
+    // The web server is separate from the poller and only runs on demand, so this
+    // almost always means "server not started", NOT "data collection stopped".
+    // No command is named here on purpose. This page is static and cannot
+    // know whether it is running from an installed app or a checkout, and the
+    // wrong instruction is worse than none -- it used to name two shell
+    // scripts that no longer exist and a path from the author's own machine.
+    // The tray menu exists on every platform and is always correct.
+    showBanner(
+      '<b>The dashboard server isn\'t running.</b> Data collection is unaffected — the poller ' +
+      'is a separate scheduled task and keeps writing to the database regardless.<br><br>' +
+      'Reopen this page from the Airo menu in your menu bar, which starts the server ' +
+      'if it is not already up.'
+    );
+    // Don't leave stale numbers looking live.
+    document.body.classList.add('disconnected');
+    const u = document.getElementById('ugm');
+    if(u && !u.dataset.dc){ u.dataset.dc = '1'; u.innerHTML += ' <b style="color:var(--fair)">— last known, not live</b>'; }
+    return;
+  }
+  document.body.classList.remove('disconnected');
+  const u = document.getElementById('ugm'); if(u) delete u.dataset.dc;
+
+  const overdue = overdueMinutes(latest);
+  // The log path is configurable and the scheduler differs per platform, so
+  // point at the one place that reports both correctly.
+  if(overdue != null) showBanner('<b>Data is ' + Math.round(overdue) + ' minutes old.</b> The background poller may have stopped. ' +
+    'Airo menu → Background agent → Health check will say why.');
+
+  render();
+}
+
+/* Which instrument the historical panels describe.
+
+   One at a time, always: mixing sources in a trend chart would silently
+   compare calibrations against each other, and two sensors a kilometre apart
+   genuinely disagree — 87 against 102 on the same peak, on this install.
+
+   Which one is a *view* choice and belongs to the reader. It is not the
+   headline: the headline is a fusion decision made in Python from distance,
+   freshness and corroboration, and a dropdown must not be able to change what
+   the air is said to be. Picking a sensor here changes what you are looking
+   at, never what Airo claims.
+
+   `null` means "follow the headline", which is the default and what happened
+   before there was a choice. Stored as provider/site_id rather than an index,
+   because indices shift when a source is added. */
+let viewSource = null;
+
+function seriesKey(s){ return s ? s.provider + '/' + s.site_id : null; }
+
+function seriesFor(data, latest, want){
+  if(!data || !data.series || !data.series.length) return null;
+  if(want){
+    const picked = data.series.find(s => seriesKey(s) === want);
+    // A source that has gone away — deleted, renamed, or simply not in this
+    // window — falls back rather than blanking the page. A reader who cannot
+    // see why the chart is empty assumes the data is gone.
+    if(picked) return picked;
+  }
+  const head = latest && latest.source;
+  if(head){
+    const match = data.series.find(s =>
+      s.provider === head.provider && String(s.site_id) === String(head.site_id));
+    if(match) return match;
+  }
+  return data.series[0];
+}
+
+function primarySeries(data, latest){
+  const chosen = seriesFor(data, latest, viewSource);
+  if(!chosen) return [];
+  return chosen.points
+    .filter(p => p.aqi != null)
+    .map(p => ({ t: new Date(p.t), v: p.aqi, pm25: p.pm25,
+                 quality: p.quality || 'ok', src: 'db' }))
+    .sort((a,b) => a.t - b.t);
+}
+
+function showBanner(html){
+  const b = document.getElementById('banner');
+  b.innerHTML = html; b.style.display = 'block';
+}
+
+/* ---------------- rendering ---------------- */
+/* One average cell: the index, with the measurement it came from beneath it.
+   `pm` is the served µg/m³ for the same bucket and is preferred whenever it
+   exists — it is the canonical value, not a conversion. Falls back to the
+   served factor, and shows the index alone when neither is available, because
+   a wrong µg figure is worse than none. */
+function setCell(id, v, pm){
+  const el = document.getElementById(id);
+  if(v==null || isNaN(v)){ el.textContent='—'; return; }
+  const b = bandFor(v);
+  const ug = (pm != null && !isNaN(pm)) ? pm.toFixed(1) + ' µg'
+           : (UG_PER_INDEX != null ? (v * UG_PER_INDEX).toFixed(1) + ' µg' : '');
+  el.innerHTML = Math.round(v) + (ug ? '<small>' + ug + '</small>' : '');
+  el.style.color = cssVar(b.css);
+}
+
+function renderHeader(){
+  if(!latest) return;
+  const ln = document.getElementById('locName');
+  if(ln) ln.textContent = latest.location_name ? '— ' + latest.location_name : '';
+  const sn = document.getElementById('scaleName');
+  if(sn) sn.textContent = latest.scale_label || 'AQI';
+}
+
+/* Show every configured source with its distance, age and staleness, and say
+   which one produced the headline. A single fused number must always be
+   traceable to an instrument -- see fusion.py. */
+/* Provider-supplied text — site names, notes, attributions — is data, not
+   markup. The footer already used textContent for exactly this reason and
+   settings.html carries an equivalent helper; these are the innerHTML sites
+   where provider strings arrive, so they get the same treatment. */
+function esc(v){
+  return String(v == null ? '' : v).replace(/[&<>"']/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function renderSources(){
+  const host = document.getElementById('sourcesPanel');
+  if(!host || !latest) return;
+  const list = latest.sources || [];
+  if(list.length < 1){ host.style.display = 'none'; return; }
+  host.style.display = '';
+
+  const chosen = latest.source || {};
+  const rows = list.map(s => {
+    const isHead = s.provider === chosen.provider &&
+                   String(s.site_id) === String(chosen.site_id);
+    const b = bandFor(s.aqi);
+    const tags = [];
+    if(s.stale) tags.push('<span class="srcTag">stale</span>');
+    if(s.quality === 'suspect') tags.push('<span class="srcTag bad">sensor fault</span>');
+    // Not a fault: an extreme level with nothing wrong with the instrument.
+    // Said differently because it means something different — "we think this
+    // is real and it is very bad" rather than "ignore this reading".
+    if(s.quality === 'extreme') tags.push('<span class="srcTag warn">extreme — unverified</span>');
+    if(s.corroboration === 'uncorroborated') tags.push('<span class="srcTag warn">unconfirmed</span>');
+    if(s.corroboration === 'typical_for_site') tags.push('<span class="srcTag">typical here</span>');
+    // Where the sensor is, said on the row rather than left to be inferred
+    // from the site name. Without it an indoor sensor is a row with no peer
+    // ratio and no explanation, which reads as a broken sensor rather than
+    // an excluded one.
+    if(s.placement === 'indoor') tags.push('<span class="srcTag">indoor</span>');
+    if(s.placement === 'unknown') tags.push('<span class="srcTag warn">location unknown</span>');
+    if(isHead) tags.push('<span class="srcTag head">headline</span>');
+    return '<tr' + (s.stale ? ' class="srcStale"' : '') + '>' +
+      '<td><span class="srcDot" style="background:' + cssVar(b.css) + '"></span>' +
+        esc(s.site_name || s.provider || '?') + ' ' + tags.join(' ') + '</td>' +
+      '<td class="num">' + (s.pm25 == null ? '—' : s.pm25.toFixed(1) + ' µg') + '</td>' +
+      '<td class="num">' + (s.aqi == null ? '—' : Math.round(s.aqi)) + '</td>' +
+      '<td class="num">' + (s.distance_km == null ? '—' : s.distance_km.toFixed(1) + ' km') + '</td>' +
+      '<td class="num">' + (s.age_minutes == null ? '—' : Math.round(s.age_minutes) + ' min') + '</td>' +
+      '<td class="num">' + (s.peer_ratio == null ? '—' : s.peer_ratio.toFixed(1) + '×') + '</td>' +
+    '</tr>' +
+    // The note under the row. `placement_note` is served only where there is
+    // something to explain, so this shows nothing on an ordinary outdoor row.
+    // Both can be present — a sensor of unknown placement can also be the one
+    // disagreeing with its peers — so they are joined rather than chosen
+    // between.
+    ((s.placement_note || (s.corroboration_note && s.corroboration !== 'corroborated')) ?
+      '<tr class="srcNoteRow"><td colspan="6">' +
+        [esc(s.placement_note),
+         (s.corroboration !== 'corroborated' ? esc(s.corroboration_note) : null)]
+          .filter(Boolean).join(' ') +
+      '</td></tr>' : '');
+  }).join('');
+
+  host.innerHTML =
+    '<h2>SOURCES <span class="hint">— ' +
+      (latest.provenance ? 'headline via ' + esc(latest.provenance) : '') +
+      (latest.fusion_rule ? ' · rule: ' + latest.fusion_rule : '') + '</span></h2>' +
+    (latest.uncorroborated ?
+      '<div class="srcAlert"><b>Not corroborated by nearby sources.</b> ' +
+        (latest.corroboration_note || '') +
+        '<br><span class="srcAlertSub">The reading is shown as measured — a fire or heater nearby is real air. ' +
+        'But it may not describe conditions beyond your immediate street.</span></div>' : '') +
+    (latest.fusion_degraded ?
+      '<div class="srcWarn">Some sources have gone quiet; the headline uses what is still reporting.</div>' : '') +
+    '<table class="srcTable"><thead><tr><th>Source</th><th class="num">PM2.5</th>' +
+      '<th class="num">Index</th><th class="num">Distance</th><th class="num">Age</th>' +
+      '<th class="num">vs peers</th></tr></thead>' +
+    '<tbody>' + rows + '</tbody></table>' +
+    (latest.attributions && latest.attributions.length ?
+      '<div class="srcAttr">' + latest.attributions.map(esc).join(' · ') + '</div>' : '');
+
+  const dbEl = document.getElementById('dbPath');
+  if(dbEl && latest.data_dir) dbEl.textContent = latest.data_dir + '/airo.db';
+
+  renderFooter(latest);
+}
+
+/* The footer is a legal surface, not decoration: PurpleAir ToS 4.8 requires
+   their attribution and 7.3 their accuracy disclaimer, and the government
+   feeds are CC BY. Which of those apply depends entirely on the sources this
+   install actually reads, so the text is built from latest.json rather than
+   written into the page. Hard-coded, it credited PurpleAir to a Queensland-
+   only user and omitted the CC BY notice they did owe. */
+function renderFooter(latest){
+  const attribs = (latest && latest.attributions) || [];
+  const el = document.getElementById('footAttrib');
+  const terms = document.getElementById('footTerms');
+  if(!el || !terms) return;
+
+  const usesPurpleAir = attribs.some(a => /purpleair/i.test(a)) ||
+    ((latest && latest.sources) || []).some(s => s.provider === 'purpleair');
+
+  // textContent, not innerHTML: attribution strings arrive via latest.json
+  // and there is no escaping helper in this file to lean on.
+  el.textContent = attribs.length ? attribs.join(' \u00b7 ') + '.' : '';
+  el.style.fontWeight = attribs.length ? '700' : 'normal';
+
+  /* ToS 7.3 wording, required only of installs that read PurpleAir. Showing
+     it to everyone would state that a Queensland regulatory monitor carries
+     no accuracy guarantee, which is both wrong and not ours to say. */
+  terms.innerHTML = usesPurpleAir
+    ? ' \u2014 underlying air quality data utilized by Airo is sourced from ' +
+      '<a href="https://www.purpleair.com" style="color:var(--accent)">PurpleAir</a>, ' +
+      'a network of consumer sensors. Sensors are owned and managed by consumers, ' +
+      'therefore PurpleAir does not guarantee data accuracy. All insights and claims ' +
+      'are solely made by Airo.<br><br>'
+    : (attribs.length ? ' All insights and claims are solely made by Airo.<br><br>'
+                      : '');
+}
+
+/* Offer networks the user isn't reading yet. A network they could be using is
+   worth mentioning where they already are -- buried in a setup command they
+   ran once, it never gets discovered. Hidden entirely when nothing to add. */
+function renderNetworks(){
+  const host = document.getElementById('networksPanel');
+  if(!host || !latest) return;
+  const nets = (latest.networks || []).filter(n => !n.in_use);
+  if(!nets.length){ host.style.display = 'none'; return; }
+  host.style.display = '';
+
+  const rows = nets.map(n => {
+    const action = n.has_key
+      ? '<span class="netReady">ready — add a site</span>'
+      : '<a href="' + n.signup_url + '" target="_blank" rel="noopener">create a free account</a>';
+    return '<tr>' +
+      '<td><b>' + n.label + '</b><div class="netNote">' + n.accuracy_note + '</div></td>' +
+      '<td class="num">' + n.tier + '</td>' +
+      '<td class="num">' + n.resolution_minutes + ' min</td>' +
+      '<td class="num">' + action + '</td>' +
+    '</tr>';
+  }).join('');
+
+  host.innerHTML =
+    '<h2>ADD ANOTHER SOURCE <span class="hint">— more instruments means better cross-checking</span></h2>' +
+    '<table class="srcTable"><thead><tr><th>Network</th><th class="num">Type</th>' +
+      '<th class="num">Updates</th><th class="num"></th></tr></thead><tbody>' + rows + '</tbody></table>' +
+    '<div class="netHow">Add a key or pick sites in ' +
+      '<a href="/settings" class="settingsLink">Settings</a>. ' +
+      'The terminal still works if you prefer it: <code>python3 setup.py</code>.</div>';
+}
+
+function renderHeadline(){
+  if(!latest) return;
+  const v = (latest.aqi != null ? latest.aqi : latest.au_aqi), b = bandFor(v);
+  const big = document.getElementById('big');
+  big.textContent = v==null ? '—' : Math.round(v);
+  big.style.color = cssVar(b.css);
+  const bl = document.getElementById('bandLabel');
+  bl.textContent = b.name; bl.style.background = cssVar(b.css);
+  // The rail restates the same served band, positioned rather than named.
+  paintScaleRail(v);
+  // Two optional halves, joined only where both are there. Concatenating with
+  // the separator baked into the first half left a dangling " · " on a scale
+  // that serves no advice, which reads as a truncated sentence rather than as
+  // nothing to say. Same idiom as the window panel below.
+  document.getElementById('ugm').textContent = [
+    latest.pm25_10min!=null ? '≈ '+latest.pm25_10min.toFixed(1)+' µg/m³' : '',
+    b.advice
+  ].filter(Boolean).join(' · ');
+
+  // What the big number is, in words. Every part of this is served by
+  // poller.py -- the page states it, it does not work it out. A reader
+  // looking at 48 above three source readings of 11.9, 14.4 and 9.2 has no
+  // way to tell it is not an average, and nothing here used to say.
+  const ex = latest.headline_explained;
+  const exEl = document.getElementById('explain');
+  if(ex){
+    // Built with textContent per line rather than innerHTML: every value
+    // here comes from the served JSON, and a site name is a provider's
+    // string. There is no escaping helper in this file and adding one to
+    // hold a provider's text inside markup is the wrong direction.
+    const lines = [];
+    if(ex.scale_label) lines.push(ex.scale_label + ' — an index, not a concentration');
+    if(ex.worked) lines.push(ex.formula ? ex.formula + '   →   ' + ex.worked
+                                        : ex.worked);
+    else if(ex.formula) lines.push(ex.formula);
+    if(ex.rule_note) lines.push(ex.rule_note + ' (rule: ' + (ex.rule||'—') + ')');
+    if(ex.basis) lines.push(ex.basis);
+    exEl.textContent = '';
+    for(const line of lines){
+      const row = document.createElement('div');
+      row.textContent = line;
+      exEl.appendChild(row);
+    }
+  } else {
+    exEl.textContent = '';
+  }
+
+  // Indexes and the µg/m³ they were derived from, bucket by bucket. Every key
+  // in averages_aqi is guaranteed to exist in averages_pm25 -- poller.py keeps
+  // them in step deliberately, so the derived value is never published without
+  // the canonical one.
+  const a = latest.averages_aqi || latest.averages_au_aqi || {};
+  const p = latest.averages_pm25 || {};
+  setCell('a_now',a.now,p.now); setCell('a_10m',a['10min'],p['10min']);
+  setCell('a_30m',a['30min'],p['30min']); setCell('a_1h',a['60min'],p['60min']);
+  setCell('a_6h',a['6hr'],p['6hr']); setCell('a_1d',a['24hr'],p['24hr']);
+  setCell('a_wk',a['1week'],p['1week']);
+}
+
+/* The trend comes from latest.json, not from arithmetic here.
+   compute_trend() in poller.py says in its own docstring that it lives there
+   "so the menu bar, the tray and the dashboard cannot disagree about which way
+   the air is going" -- and this page then re-derived it, with its own copies of
+   the +5 and +2 thresholds. Two implementations of one judgement drift the
+   moment either is edited, and the tray already reads the Python one. */
+function renderTrend(){
+  const t = document.getElementById('trend');
+  if(!t) return;
+  const trend = latest && latest.trend;
+  if(!trend || !trend.text){ t.textContent=''; return; }
+  const colour = {rising_fast:'--poor', rising:'--fair',
+                  clearing:'--vgood', steady:'--dim'}[trend.direction] || '--dim';
+  const arrow = {rising_fast:'▲', rising:'▲', clearing:'▼'}[trend.direction] || '▬';
+  t.textContent = arrow + ' ' + trend.text;
+  t.style.color = cssVar(colour);
+}
+
+/* The sensor picker. Every source that has a series, the headline marked, and
+   indoor ones labelled so nobody reads kitchen air as the street by mistake.
+
+   Populated from the series payload rather than from `latest.sources`, because
+   a source with no readings in the window has nothing to draw and offering it
+   would produce an empty chart with no explanation. */
+function renderSourcePicker(){
+  const el = document.getElementById('srcPick');
+  if(!el || !seriesData || !seriesData.series) return;
+  const head = (latest && latest.source) || {};
+  const headKey = head.provider ? head.provider + '/' + head.site_id : null;
+  const placement = {};
+  for(const s of (latest && latest.sources) || []) placement[s.provider + '/' + s.site_id] = s.placement;
+
+  el.innerHTML = seriesData.series.map(s => {
+    const k = seriesKey(s);
+    const bits = [];
+    if(k === headKey) bits.push('headline');
+    if(placement[k] === 'indoor') bits.push('indoor');
+    if(placement[k] === 'unknown') bits.push('location unknown');
+    return '<option value="' + k + '"' + (k === viewSource || (!viewSource && k === headKey) ? ' selected' : '') +
+      '>' + esc(s.site_name || k) + (bits.length ? ' (' + bits.join(', ') + ')' : '') + '</option>';
+  }).join('');
+}
+
+function renderRecordStats(){
+  /* Every reading held, not the length of the series this page is holding.
+
+     The series follows the headline source, so adding a sensor nearer the
+     house than the previous one moved the headline to an instrument installed
+     half an hour earlier and this panel — labelled "Readings on disk" — went
+     from 18,617 to 4. Nothing had been lost; the page said it had, which on a
+     page whose whole job is to be trusted about the record is the worst kind
+     of wrong.
+
+     Falls back to the series only where the server did not send a total, so an
+     older server still shows something rather than a dash. */
+  const rec = (latest && latest.record) || {};
+  document.getElementById('s_rows').textContent =
+    (rec.readings_total != null ? rec.readings_total : readings.length)
+      .toLocaleString();
+  /* The span of the record, for the same reason as the count above: these
+     are labelled "First reading" and "Last reading", not "first reading from
+     whichever sensor is currently the headline". A new sensor taking the
+     headline would otherwise report the record as starting this morning. */
+  const first = rec.first_utc ? new Date(rec.first_utc)
+              : (readings.length ? readings[0].t : null);
+  const last  = rec.last_utc  ? new Date(rec.last_utc)
+              : (readings.length ? readings[readings.length-1].t : null);
+  if(!first || !last) return;
+  // include the year once the record spans more than a few months, otherwise
+  // "30 July" is ambiguous between this year and last
+  const spanDays = (last - first)/86400000;
+  const fmt = d => d.toLocaleString('en-AU', spanDays > 120
+    ? {day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}
+    : {day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+  document.getElementById('s_first').textContent = fmt(first);
+  document.getElementById('s_last').textContent  = fmt(last);
+  document.getElementById('s_bf').textContent    = (latest && latest.sources ? latest.sources.length : 0);
+  renderWeatherRecord();
+}
+
+/* The weather this install holds, and the credit owed for it.
+
+   `latest.weather` has carried an attribution, a licence and a homepage
+   since the forecast work landed, and no surface rendered any of the three
+   -- so the CC BY notice the government feeds get was owed here too and was
+   nowhere on the page. Hidden entirely on an install that holds no weather,
+   which is most of them.
+
+   Built as nodes rather than markup: the strings come from served JSON, this
+   file has no escaping helper, and the same reasoning already governs the
+   footer next door. The link is only made a link if it is https, so a hostile
+   payload cannot turn the credit into a javascript: URL. */
+function renderWeatherRecord(){
+  const row = document.getElementById('wxRow');
+  const cell = document.getElementById('s_wx');
+  const credit = document.getElementById('wxAttrib');
+  if(!row || !cell || !credit) return;
+  const wx = (latest && latest.weather) || null;
+  if(!wx || !wx.hours){
+    row.style.display = 'none'; credit.style.display = 'none'; return;
+  }
+  row.style.display = '';
+  cell.textContent = wx.hours.toLocaleString() + ' hr';
+
+  credit.style.display = '';
+  credit.textContent = '';
+  const name = wx.attribution || wx.source || '';
+  // Elements only, never a text node: the test harness's document has
+  // createElement and no createTextNode, and a panel that renders in the
+  // browser but throws under the harness is one nobody is checking.
+  const linkable = /^https:\/\//.test(wx.homepage || '');
+  const named = document.createElement(linkable ? 'a' : 'span');
+  if(linkable){
+    named.setAttribute('href', wx.homepage);
+    named.setAttribute('rel', 'noopener');
+  }
+  named.textContent = name;
+  credit.appendChild(named);
+  if(wx.licence){
+    const lic = document.createElement('span');
+    lic.textContent = ' · ' + wx.licence;
+    credit.appendChild(lic);
+  }
+}
+
+/* Every step runs in its own try/catch, with no exceptions.
+   renderHeader() used to be called bare, and it calls renderFooter() -- the
+   legal surface carrying attribution and the health disclaimer -- so a throw
+   in either blanked every panel after it. That is the bug ARCHITECTURE 3.3
+   documents, back again because the guard was applied to a list of steps
+   rather than to the act of running one. */
+/* The key under the history chart, built from the table the chart is coloured
+   from rather than from a second list of the same numbers.
+
+   It was five rows of static markup -- "0–33 Very good" through "150–200 Very
+   poor" -- and `adoptBands()` cannot reach markup. On a us_epa install the
+   chart recoloured itself around EPA breakpoints and the key beneath it still
+   named Australian bands, the two disagreeing inside one glance; and on an AU
+   install the list stopped at Very poor, so the Hazardous band was a colour
+   with no name anywhere on the page.
+
+   Ceilings, not ranges. The served table says one thing about each band --
+   where it ends -- and the rule that reads it is `value <= max`, so "≤66
+   Good" is precisely what the band means. Writing "34–66" needs to know the
+   scale's granularity, which is right for an integer AQI and wrong for the
+   raw µg/m³ scale, whose boundaries are 15, 25 and 37.5. */
+/* The band table as an instrument face.
+
+   Each band gets a segment as wide as its own span, so the picture answers
+   "how much headroom is left before the next colour" -- which is the
+   question a glance from across the room is actually asking, and the one a
+   row of equal-sized chips cannot answer.
+
+   Everything here is read off the served table. The spans come from the
+   ceilings adoptBands() took off the wire, so a us_epa install draws EPA
+   widths and a raw install draws the WHO ones, whose boundaries are 15, 25
+   and 37.5 -- hence no integer arithmetic anywhere below.
+
+   The last band is open-ended (`max` is null). It is given the width of the
+   band before it: something has to be drawn, and inventing a ceiling for it
+   would be inventing a boundary, which is the one thing this page may never
+   do. */
+function railSpans(){
+  const out = [];
+  let floor = 0;
+  for(const b of BANDS){
+    const prev = out.length ? out[out.length-1] : null;
+    const span = b.max != null ? Math.max(b.max - floor, 0)
+               : (prev ? prev.span : 1);
+    out.push({band: b, span: span || 1, from: floor,
+              to: b.max != null ? b.max : floor + (span || 1)});
+    if(b.max != null) floor = b.max;
+  }
+  return out;
+}
+
+function railHTML(){
+  return railSpans().map(s =>
+    '<i class="railSeg" style="flex:' + s.span.toFixed(4) +
+    ';background:' + cssVar(s.band.css) + '"></i>').join('');
+}
+
+/* Where the needle sits, as a percentage of the whole rail. Clamped at both
+   ends: a reading past the last bounded ceiling is real air and must still
+   show, pinned at the top of the scale rather than sliding off it. */
+function railPosition(v){
+  const spans = railSpans();
+  if(!spans.length || v == null || isNaN(v)) return null;
+  const total = spans.reduce((t, s) => t + s.span, 0) || 1;
+  let before = 0;
+  for(const s of spans){
+    if(v <= s.to || s === spans[spans.length-1]){
+      const within = s.span ? Math.min(Math.max((v - s.from) / s.span, 0), 1) : 0;
+      return Math.min(Math.max((before + within * s.span) / total, 0), 1) * 100;
+    }
+    before += s.span;
+  }
+  return null;
+}
+
+function paintScaleRail(v){
+  const track = document.getElementById('railTrack');
+  const needle = document.getElementById('railNeedle');
+  if(track) track.innerHTML = railHTML();
+  if(!needle) return;
+  const pos = railPosition(v);
+  // Hidden rather than parked at zero when there is no reading: a needle
+  // resting on the left of the scale is a claim that the air is very good.
+  needle.style.setProperty('--pos', (pos == null ? 0 : pos) + '%');
+  needle.style.opacity = pos == null ? '0' : '1';
+}
+
+function renderLegend(){
+  const el = document.getElementById('legend');
+  if(!el) return;
+  const keys = BANDS.map((b, i) => {
+    const prev = i > 0 ? BANDS[i-1].max : null;
+    const range = b.max != null ? '≤' + b.max
+                : (prev != null ? 'above ' + prev : '');
+    return '<span><i style="background:' + cssVar(b.css) + '"></i>' +
+           (range ? range + ' ' : '') + b.name + '</span>';
+  }).join('');
+  el.innerHTML = '<span class="legendRail">' + railHTML() + '</span>' +
+                 '<span class="railKeys">' + keys + '</span>';
+}
+
+/* The captions that name the window and the scale. Set here rather than typed
+   into the markup, for the same reason as the legend: three of them said
+   "3pm–1am" and one said "the Australian AQI band", and no configuration
+   could change either. */
+function renderCaptions(){
+  const from = hourLabel(RISK_START), to = hourLabel(RISK_END);
+  const set = (id, text) => {
+    const el = document.getElementById(id); if(el) el.textContent = text; };
+  set('riskCaption', '— shaded band is the ' + from + '–' + to + ' risk window');
+  set('hmCaption', '— mean per hour, ' + from + ' to ' + to +
+                   '. Compare any night to any other.');
+  set('premCaption', '— ' + from + '-onward mean ÷ rest-of-day mean. ' +
+                     'Above 1.5 is a trapping night.');
+  set('s_eveLabel', 'Evening mean (' + from + '+)');
+  // The scale label is served in every payload. Omitted rather than guessed
+  // when it is absent: a caption naming the wrong national standard for the
+  // colours directly above it is worse than no caption.
+  set('hmColourNote', 'Rows are nights, columns are hours.' +
+      (latest && latest.scale_label
+        ? ' Colour is the ' + latest.scale_label + ' band.' : ''));
+}
+
+const RENDER_STEPS = [
+  ['header',   () => renderHeader()],
+  ['legend',   () => renderLegend()],
+  ['captions', () => renderCaptions()],
+  ['picker',   () => renderSourcePicker()],
+  ['networks', () => renderNetworks()],
+  ['sources',  () => renderSources()],
+  ['headline', () => renderHeadline()],
+  ['trend',    () => renderTrend()],
+  ['record',   () => renderRecordStats()],
+  ['status',   () => updateStatus()],
+  ['chart',    () => drawChart()],
+  ['today',    () => todayStats()],
+  ['days',     () => dayTable()],
+  ['heatmap',  () => drawHeatmap()],
+  ['poll',     () => pollInfo()],
+  // Registered like every other step, and it is the one that most needs to
+  // be: it fetches, so it is the likeliest to throw, and a panel about
+  // whether the house is keeping smoke out must not be able to blank the
+  // reading beside it. The call is fire-and-forget from loadData(); this
+  // entry is what puts it in the guarded list the contract enumerates.
+  ['inside',   () => drawInsideOutside()],
+];
+
+function render(){
+  for(const [name, fn] of RENDER_STEPS){
+    try{ fn(); }catch(err){ console.error('render step "'+name+'" failed:', err); }
+  }
+}
+
+function pollInfo(){
+  const el = document.getElementById('pollInfo');
+  if(!latest || !latest.fetched_utc){ el.textContent=''; return; }
+  const mins = latest.poll_minutes || 15;
+  const since = (Date.now() - new Date(latest.fetched_utc).getTime())/60000;
+  const left = Math.max(0, mins - since);
+  const m = Math.floor(left), s = Math.floor((left-m)*60);
+  el.innerHTML = 'agent polls every ' + mins + ' min · last ' +
+    (since < 1 ? 'just now' : Math.round(since)+' min ago') +
+    ' · next in ' + m + ':' + String(s).padStart(2,'0');
+  el.style.color = since > mins*2.5 ? cssVar('--poor') : cssVar('--faint');
+}
+
+function updateStatus(){
+  /* Renders the server's decision. Does not make one.
+
+     This panel used to compute the advice from the clock alone, and so on a
+     morning with a fire nearby it read "Cleanest part of the day —
+     good window to open up and ventilate" beside a headline well into the
+     third band and rising sharply. The register already named that risk; the
+     protection had been built for the inside-against-outside panel and this
+     surface had none.
+
+     Rule 7, and decision D8: two surfaces phrasing one health decision
+     drift, and one of the phrasings is then the wrong remedy. The words come
+     from ventilation_advice() in poller.py, which weighs the reading as well
+     as the hour. */
+  const box = document.getElementById('status');
+  const txt = document.getElementById('statusTxt');
+  if(!box || !txt) return;
+  const w = (latest && latest.window_advice) || null;
+  if(!w){
+    // An older server sends nothing. Say nothing rather than guessing from
+    // the clock, which is the behaviour that caused this.
+    box.className = 'status';
+    box.querySelector('b').textContent = 'Window';
+    txt.textContent = '';
+    return;
+  }
+  box.className = 'status';
+  box.classList.add(w.may_ventilate ? 'st-clear' : 'st-active');
+  box.querySelector('b').textContent = w.headline || 'Window';
+  txt.textContent = [w.advice, w.why].filter(Boolean).join(' ');
+}
+
+function inRange(){
+  if(!rangeH) return readings;
+  const cut = Date.now() - rangeH*3600e3;
+  return readings.filter(r => +r.t >= cut);
+}
+
+/* x axis is a plain linear scale over epoch-ms (Chart.js "time" needs a separate
+   date-adapter library). Left to itself a linear scale picks round numbers of
+   MILLISECONDS, which never land on clean clock times — so we build the ticks
+   ourselves, aligned to local hour/day boundaries.
+   Brisbane has no DST, so fixed-step arithmetic from local midnight is safe. */
+const H_MS = 3600e3, D_MS = 24*H_MS;
+let tickStep = H_MS;
+
+function chooseStep(span){
+  if(span <=  6*H_MS) return 30*60e3;
+  if(span <= 14*H_MS) return H_MS;
+  if(span <= 30*H_MS) return 2*H_MS;
+  if(span <=  3*D_MS) return 6*H_MS;
+  if(span <=  9*D_MS) return 12*H_MS;
+  if(span <= 20*D_MS) return D_MS;
+  if(span <= 70*D_MS) return 3*D_MS;
+  return 7*D_MS;
+}
+
+function buildTimeTicks(scale){
+  const {min, max} = scale;
+  if(min == null || max == null || !(max > min)) return;
+  tickStep = chooseStep(max - min);
+  scale.ticks = generateTicks(min, max, tickStep);
+}
+
+/* Tick positions between two epoch-ms bounds.
+   Extracted from buildTimeTicks so it can be tested without Chart.js — see
+   tests/test_dates.py, which runs it under two timezones.
+
+   Day-sized steps MUST advance by calendar days, not by 86,400,000 ms.
+   Adding a fixed day across a daylight-saving boundary lands the tick at
+   23:00 or 01:00 and every subsequent label drifts by an hour. Sub-day steps
+   are genuine durations and are correct as fixed arithmetic. This was
+   ROADMAP #5. */
+function generateTicks(min, max, step){
+  const ticks = [];
+  const cursor = new Date(min);
+  cursor.setHours(0, 0, 0, 0);                    // local midnight, DST-correct
+
+  if(step >= D_MS){
+    const days = Math.max(1, Math.round(step / D_MS));
+    // Walk forward in whole local days so each tick stays on midnight.
+    while(cursor.getTime() < min) cursor.setDate(cursor.getDate() + days);
+    while(cursor.getTime() <= max && ticks.length < 400){
+      ticks.push({value: cursor.getTime()});
+      cursor.setDate(cursor.getDate() + days);
+    }
+    return ticks;
+  }
+
+  let t = cursor.getTime();
+  while(t < min) t += step;
+  while(t <= max && ticks.length < 400){ ticks.push({value:t}); t += step; }
+  return ticks;
+}
+
+function fmtTick(ms){
+  const d = new Date(ms);
+  const midnight = d.getHours()===0 && d.getMinutes()===0;
+  if(tickStep >= D_MS)
+    return d.toLocaleDateString('en-AU',{day:'numeric',month:'short'});
+  if(midnight)                                    // date marker inside an hourly axis
+    return d.toLocaleDateString('en-AU',{day:'numeric',month:'short'});
+  return d.toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit',hour12:false});
+}
+
+/* How high the y-axis goes.
+
+   It used to be the maximum, which was safe only because the worst readings
+   never reached the chart: anything over 350 µg/m³ was filed as a sensor
+   fault and filtered out upstream. That was the bug — the air most worth
+   seeing was the air the chart would not draw — and now that those readings
+   arrive, the maximum is the wrong ceiling. A single spike of 900 µg/m³
+   stretches the axis twentyfold and flattens an ordinary week into a line
+   along the bottom.
+
+   A high percentile instead, which distinguishes the two cases by itself:
+
+     * a real event — a fire, a still winter night — is *sustained*. It
+       occupies far more than the top 2% of a window, so the percentile rises
+       with it and the axis follows the air, as it should.
+     * a one-off — a spike, a moment of smoke beside the instrument — is a
+       handful of points among thousands. The percentile ignores it, the axis
+       stays readable, and the spike is pinned to the top edge and marked
+       rather than being erased or allowed to take over.
+
+   No threshold, no special case, and nothing to tune per window length. */
+const AXIS_PERCENTILE = 0.98;
+
+function axisCeiling(vals){
+  const v = vals.filter(n => n != null && isFinite(n));
+  if(!v.length) return 0;
+  // Below this there are too few points for a percentile to mean anything:
+  // at 20 readings the top 2% is one reading, which is just the maximum
+  // again. A short window shows everything it has.
+  if(v.length < 50) return Math.max(...v);
+  const s = [...v].sort((a,b) => a-b);
+  return s[Math.min(s.length-1, Math.floor(AXIS_PERCENTILE * (s.length-1)))];
+}
+
+function drawChart(){
+  // pm25 rides along unused by the renderer, so the tooltip can show the
+  // measurement rather than converting the index back to one.
+  const data = inRange().map(r=>({x:+r.t, y:r.v, pm25:r.pm25}));
+  document.getElementById('rowCount').textContent = plural(data.length, 'point') + ' shown';
+  const ys = data.map(p=>p.y);
+  const yMax = Math.max(45, Math.ceil((axisCeiling(ys)+10)/10)*10);
+
+  const cfg = {
+    type:'line',
+    data:{datasets:[{
+      data,
+      borderColor:cssVar('--accent'),
+      borderWidth:2,
+      pointRadius:0, pointHoverRadius:4, tension:.15,
+      // colour each line segment by the band it sits in — makes severity readable at a glance
+      segment:{
+        borderColor: ctx => cssVar(bandFor(Math.max(ctx.p0.parsed.y, ctx.p1.parsed.y)).css)
+      },
+      fill:{target:'origin', above:'rgba(255,255,255,.045)'}
+    }]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,parsing:false,normalized:true,
+      interaction:{mode:'nearest',intersect:false},
+      scales:{
+        x:{type:'linear', bounds:'data',
+           afterBuildTicks: buildTimeTicks,
+           grid:{color:cssVar('--line')},
+           ticks:{color:cssVar('--faint'), maxRotation:0, font:{size:10},
+                  autoSkip:true, autoSkipPadding:14, callback:v=>fmtTick(v)}},
+        y:{min:0,max:yMax,grid:{color:cssVar('--line')},ticks:{color:cssVar('--faint'),font:{size:10}}}
+      },
+      plugins:{legend:{display:false},tooltip:{
+        displayColors:false, padding:9, titleFont:{size:12.5}, bodyFont:{size:12},
+        callbacks:{
+        title:items => items.length
+          ? new Date(items[0].parsed.x).toLocaleString('en-AU',
+              {weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',hour12:false})
+          : '',
+        label:c=>{
+          const v=c.parsed.y;
+          // The point carries its own pm25; prefer it over converting.
+          const ug = c.raw && c.raw.pm25 != null
+            ? c.raw.pm25.toFixed(1)+' µg/m³' : ugText(v);
+          return Math.round(v)+' AQI'+(ug ? ' · ≈'+ug : '')+' · '+bandFor(v).name;
+      }}}}
+    },
+    plugins:[{
+      // Crosshair + time label pinned to the axis, so a hovered point can be read
+      // straight down onto the timeline without relying on the tooltip alone.
+      id:'crosshair',
+      afterDatasetsDraw(c){
+        const act = c.tooltip && c.tooltip.getActiveElements ? c.tooltip.getActiveElements() : [];
+        if(!act.length) return;
+        const {ctx, chartArea:a} = c;
+        const px = act[0].element.x;
+        const val = c.data.datasets[0].data[act[0].index];
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255,255,255,.42)';
+        ctx.lineWidth = 1; ctx.setLineDash([3,3]);
+        ctx.beginPath(); ctx.moveTo(px, a.top); ctx.lineTo(px, a.bottom); ctx.stroke();
+        ctx.setLineDash([]);
+        // time chip on the axis
+        const label = new Date(val.x).toLocaleTimeString('en-AU',
+          {hour:'2-digit',minute:'2-digit',hour12:false});
+        ctx.font = '600 10px -apple-system,sans-serif';
+        const w = ctx.measureText(label).width + 10;
+        let lx = Math.min(Math.max(px - w/2, a.left), a.right - w);
+        ctx.fillStyle = cssVar('--accent');
+        ctx.beginPath();
+        (ctx.roundRect ? ctx.roundRect(lx, a.bottom + 3, w, 15, 3)
+                       : ctx.rect(lx, a.bottom + 3, w, 15));
+        ctx.fill();
+        ctx.fillStyle = '#0d1117'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(label, lx + w/2, a.bottom + 10.5);
+        ctx.restore();
+      }
+    },{id:'bg',beforeDatasetsDraw(c){
+      const {ctx,chartArea:a,scales:{x,y}} = c;
+      // Derived from the one table, not a second copy of the numbers. Both
+      // used to be written out by hand and both were Australian.
+      // A null ceiling means unbounded; the chart needs a number to draw to.
+      const BANDS_D = BANDS.map((b, i) => [
+        i === 0 ? 0 : (BANDS[i-1].max == null ? 0 : BANDS[i-1].max),
+        b.max == null ? 1e9 : b.max, b.css, b.name]);
+
+      // 1. Risk window FIRST and very subtle, so it can't wash out the bands.
+      //    Emphasis moves to a solid marker strip along the bottom axis.
+      if(x.min != null){
+        const s0=new Date(x.min), e0=new Date(x.max);
+        for(let d=new Date(s0.getFullYear(),s0.getMonth(),s0.getDate()-1); d<=e0; d.setDate(d.getDate()+1)){
+          const s=new Date(d); s.setHours(RISK_START,0,0,0);
+          const e=new Date(d); if(riskWraps()) e.setDate(e.getDate()+1);
+          e.setHours(RISK_END,0,0,0);
+          const p1=x.getPixelForValue(Math.max(+s,x.min)), p2=x.getPixelForValue(Math.min(+e,x.max));
+          if(p2<=p1) continue;
+          ctx.save();
+          ctx.globalAlpha=.05; ctx.fillStyle='#fff';
+          ctx.fillRect(p1,a.top,p2-p1,a.bottom-a.top);
+          ctx.globalAlpha=.55; ctx.fillStyle=cssVar('--fair');
+          ctx.fillRect(p1,a.bottom-3,p2-p1,3);      // solid strip = the window
+          ctx.restore();
+        }
+      }
+
+      // 2. Band fills, strong enough to read.
+      ctx.save();
+      for(const [lo,hi,v] of BANDS_D){
+        const yt=y.getPixelForValue(Math.min(hi,y.max)), yb=y.getPixelForValue(Math.max(lo,y.min));
+        if(yb<=yt) continue;
+        ctx.globalAlpha = .17;
+        ctx.fillStyle=cssVar(v); ctx.fillRect(a.left,yt,a.right-a.left,yb-yt);
+      }
+      ctx.restore();
+
+      // 3. Crisp threshold lines + right-edge labels, so each band is identifiable.
+      ctx.save();
+      ctx.font='600 9px -apple-system,sans-serif';
+      ctx.textBaseline='middle'; ctx.textAlign='right';
+      for(const [lo,hi,v,name] of BANDS_D){
+        if(lo > y.max) continue;
+        if(lo > y.min){                                  // boundary line
+          const yp=y.getPixelForValue(lo);
+          ctx.globalAlpha=.65; ctx.strokeStyle=cssVar(v); ctx.lineWidth=1;
+          ctx.beginPath(); ctx.moveTo(a.left,yp); ctx.lineTo(a.right,yp); ctx.stroke();
+        }
+        const mid=y.getPixelForValue(Math.min((lo+Math.min(hi,y.max))/2, y.max));
+        if(mid>a.top+6 && mid<a.bottom-6 && (Math.min(hi,y.max)-lo) > y.max*0.07){
+          ctx.globalAlpha=.85; ctx.fillStyle=cssVar(v);
+          ctx.fillText(name, a.right-5, mid);
+        }
+      }
+      ctx.restore();
+    }}]
+  };
+  if(chart){ chart.data=cfg.data; chart.options=cfg.options; chart.update('none'); }
+  else chart = new Chart(document.getElementById('chart'), cfg);
+}
+
+/* group into "nights": 3pm on day D through 1am on D+1.
+   Keys MUST be built from local date parts — toISOString() shifts to UTC, which in
+   Brisbane (UTC+10) pushes morning readings onto the previous date and scrambles the
+   evening/daytime pairing. */
+/* "1 readings" was the first thing a brand-new user saw. */
+const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
+const pad2 = n => String(n).padStart(2,'0');
+const localDateKey = d => d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate());
+
+/* Group every reading into nights, and measure how much worse the evening was
+   than the same day's daytime.
+
+   "Evening" is 3pm to 1am, and a night is named for the date it *started* --
+   so 00:30 belongs to the night before, not to the morning it is technically
+   in. Getting that wrong splits every night in two and halves both averages.
+
+   The ratio is the whole point of the panel: cold air drainage after sunset
+   traps particulates in a valley, and a number that is unremarkable as a daily
+   average can be several times worse for the hours someone is actually home.
+   Comparing a night against its own daytime rather than against other nights
+   is what removes the weather and the season from the comparison.
+
+   Returns one row per night, oldest first. `ratio` is null unless both windows
+   have enough coverage to be worth dividing -- see MIN_HOURS below. */
+function byNight(){
+  const map = new Map();
+  for(const r of readings){
+    const d = new Date(r.t);
+    const h = d.getHours();
+    const k = localDateKey(nightOf(d));   // 00:xx belongs to the previous evening
+    if(!map.has(k)) map.set(k, {eve:[], day:[], eveH:new Set(), dayH:new Set()});
+    const b = map.get(k);
+    if(inRiskWindow(h)){ b.eve.push(r.v); b.eveH.add(h); }
+    else               { b.day.push(r.v); b.dayH.add(h); }
+  }
+  const mean = a => a.length ? a.reduce((s,x)=>s+x,0)/a.length : null;
+  // Require coverage in HOURS, not in samples. A fixed 12-sample minimum was
+  // "2 hours at 10-min resolution" — but on an hourly government feed 12
+  // samples means 12 hours, and the evening window is only 10 hours long, so
+  // the condition could never be met. Every user on a keyless government
+  // source — the default a new user is steered to — saw "—" for evening
+  // premium and every worst-nights ratio, permanently, with a full database.
+  const MIN_HOURS = 3;
+  return [...map.entries()].map(([k,v])=>{
+    const e = mean(v.eve), d = mean(v.day);
+    const complete = v.eveH.size >= MIN_HOURS && v.dayH.size >= MIN_HOURS;
+    return {
+      date:k, nEve:v.eve.length, nDay:v.day.length, complete,
+      peak: v.eve.length ? Math.max(...v.eve) : null,
+      eve:e, day:d,
+      ratio: (complete && e!=null && d>0) ? e/d : null
+    };
+  }).filter(n => n.nEve || n.nDay)
+    .sort((a,b)=>a.date.localeCompare(b.date));
+}
+
+/* One bar per night, coloured by how pronounced the evening premium was.
+
+   The 1.2x and 1.5x cutoffs are presentation only -- they group bars so a
+   pattern is visible at a glance, and they are not thresholds anyone is
+   advised on. Nothing acts on them: alerting reads its own thresholds from the
+   server, and no health advice is attached to a bar's colour. Keep it that
+   way. A number here that started meaning something would be a health
+   judgement living in the browser.
+
+   Noon is used to build the label because a date-only string parses as UTC,
+   which in UTC+10 renders the previous day. */
+function drawDays(nights){
+  const labels = nights.map(n => new Date(n.date+'T12:00').toLocaleDateString('en-AU',{day:'numeric',month:'short'}));
+  const vals = nights.map(n => n.ratio);
+  const cols = vals.map(v => v==null ? cssVar('--faint') : v>=1.5 ? cssVar('--poor') : v>=1.2 ? cssVar('--fair') : cssVar('--vgood'));
+  const cfg = {
+    type:'bar',
+    data:{labels, datasets:[{data:vals, backgroundColor:cols, borderRadius:3}]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
+      scales:{x:{grid:{display:false},ticks:{color:cssVar('--faint'),font:{size:10}}},
+              y:{beginAtZero:true,grid:{color:cssVar('--line')},ticks:{color:cssVar('--faint'),font:{size:10}}}},
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>
+        c.parsed.y==null?'no data':c.parsed.y.toFixed(2)+'× evening vs daytime'}}}}
+  };
+  if(chartDays){ chartDays.data=cfg.data; chartDays.options=cfg.options; chartDays.update('none'); }
+  else chartDays = new Chart(document.getElementById('chartDays'), cfg);
+}
+
+/* -------- evening-window heatmap: nights x the hours of the window -------- */
+const hourLabel = h => h===0 ? '12am' : (h===12 ? '12pm' : (h>12 ? (h-12)+'pm' : h+'am'));
+let hmDays = 7;
+
+function eveningGrid(){
+  // key by "night": hour 0 belongs to the previous evening
+  const map = new Map();
+  for(const r of readings){
+    const d = new Date(r.t), h = d.getHours();
+    if(!inRiskWindow(h)) continue;
+    const k = localDateKey(nightOf(d));
+    if(!map.has(k)) map.set(k, {});
+    (map.get(k)[h] = map.get(k)[h] || []).push(r.v);
+  }
+  // Every calendar night between the first and the last, including the ones
+  // with nothing in them. Without this a night the sensor missed entirely
+  // produced no entry at all, so the grid closed over the gap and an outage
+  // was not shown as blank — it was not shown. The maintainer's nearest
+  // sensor was dark for about two days and the row for the middle day did
+  // not exist, which also made "last 7 nights" span eight calendar days.
+  //
+  // Padded rather than filled: the row appears, its cells stay null. A gap
+  // borrowing its neighbours' numbers would invent a night nobody measured.
+  const keys = [...map.keys()].sort();
+  if(keys.length){
+    for(let d = new Date(keys[0]+'T12:00'), last = new Date(keys[keys.length-1]+'T12:00');
+        d <= last; d.setDate(d.getDate()+1)){
+      const k = localDateKey(d);
+      if(!map.has(k)) map.set(k, {});
+    }
+  }
+
+  const mean = a => a.length ? a.reduce((s,x)=>s+x,0)/a.length : null;
+  return [...map.entries()]
+    .map(([date,hours])=>{
+      const cells = {}; let all = [];
+      for(const h of eveHours()){
+        cells[h] = hours[h] ? mean(hours[h]) : null;
+        if(hours[h]) all = all.concat(hours[h]);
+      }
+      return {date, cells, mean: mean(all), peak: all.length?Math.max(...all):null, n: all.length};
+    })
+    .sort((a,b)=>a.date.localeCompare(b.date));
+}
+
+function drawHeatmap(){
+  const wrap = document.getElementById('hmWrap');
+  let grid = eveningGrid();
+  if(!grid.length){ wrap.innerHTML = '<div class="note">No evening data yet.</div>'; return; }
+  if(hmDays) grid = grid.slice(-hmDays);
+
+  // The window's hours, resolved once: the header, every row and the median
+  // footer must all use the same columns, and reading the consts three times
+  // would let a payload arriving mid-render produce a ragged table.
+  const HOURS = eveHours();
+  const todayK = localDateKey(new Date());
+
+  /* Whose readings these are, and what a blank means.
+
+     Every panel downstream of primarySeries() describes one instrument — the
+     headline source — because mixing instruments in a trend would compare
+     calibrations against each other. The grid never said so, so when the
+     maintainer's nearest sensor went dark for two days the blanks read as "no
+     data was collected" rather than "this sensor was silent while the other
+     three reported normally". That is a different fact and a different
+     worry. */
+  const viaRaw = (latest && latest.source && latest.source.site_name)
+            || (latest && latest.provenance) || null;
+  const via = viaRaw ? esc(viaRaw) : null;
+  let h = '<div class="note" style="margin:0 0 8px">' +
+    (via ? 'Every figure here is from <b>' + via + '</b>, the sensor the ' +
+           'headline uses — one instrument throughout, so nights can be ' +
+           'compared with each other. '
+         : '') +
+    'A blank hour is one that sensor did not report; any other sources you ' +
+    'have are unaffected.</div>';
+  h += '<table class="hm"><thead><tr><th class="rowlab">night</th>';
+  for(const hr of HOURS) h += '<th>'+hourLabel(hr)+'</th>';
+  h += '<th style="padding-left:8px">mean</th><th>peak</th></tr></thead><tbody>';
+
+  for(const row of grid){
+    const d = new Date(row.date+'T12:00');
+    const lab = d.toLocaleDateString('en-AU',{weekday:'short',day:'numeric',month:'short'});
+    h += '<tr'+(row.date===todayK?' class="today"':'')+'><th class="rowlab">'+lab+'</th>';
+    for(const hr of HOURS){
+      const v = row.cells[hr];
+      if(v==null){ h += '<td class="empty">·</td>'; continue; }
+      const b = bandFor(v);
+      h += '<td style="background:'+cssVar(b.css)+'" title="'+lab+' '+hourLabel(hr)+
+           ' — AQI '+Math.round(v)+(ugText(v) ? ' ('+ugText(v)+')' : '')+', '+b.name+'">'+
+           Math.round(v)+'</td>';
+    }
+    const mb = row.mean==null?null:bandFor(row.mean), pb = row.peak==null?null:bandFor(row.peak);
+    h += '<td class="agg" style="padding-left:8px;color:'+(mb?cssVar(mb.css):'var(--faint)')+'">'+
+         (row.mean==null?'—':Math.round(row.mean))+'</td>';
+    h += '<td class="agg" style="color:'+(pb?cssVar(pb.css):'var(--faint)')+'">'+
+         (row.peak==null?'—':Math.round(row.peak))+'</td></tr>';
+  }
+
+  // Column MEDIAN across the shown nights — the typical shape of an evening.
+  // Median not mean: a single faulty or extreme night would otherwise dominate,
+  // and the 2025 record contains readings far outside plausible ambient values.
+  const median = a => { const s=[...a].sort((x,y)=>x-y); const m=s.length>>1;
+    return s.length%2 ? s[m] : (s[m-1]+s[m])/2; };
+  h += '</tbody><tfoot><tr><th class="rowlab" style="padding-top:6px">typical</th>';
+  for(const hr of HOURS){
+    const vs = grid.map(r=>r.cells[hr]).filter(v=>v!=null);
+    if(!vs.length){ h += '<td class="empty">·</td>'; continue; }
+    const m = median(vs);
+    h += '<td style="background:'+cssVar(bandFor(Math.round(m)).css)+';opacity:.9" title="median across '+
+         vs.length+' nights at '+hourLabel(hr)+'">'+Math.round(m)+'</td>';
+  }
+  h += '<td class="agg"></td><td class="agg"></td></tr></tfoot></table>';
+
+  /* Data-quality warning, from the judgement the poller already made.
+     store.assess_quality() decides this per reading at ingest -- on the
+     concentration, using the channel disagreement and the provider's own
+     confidence as well as the level -- and stores it. This page used to
+     re-derive it from the index with a threshold of its own, converting back
+     to µg/m³ by dividing by four, which is the Australian scale written out
+     as arithmetic. Two answers to "is this plausible?", and the stored one is
+     better informed. */
+  /* From the API, not from `readings`. Two different verdicts arrive here and
+     they are reported separately, because telling someone their sensor is
+     broken when the truth is that the air is dangerous is the worst mistake
+     this page could make.
+
+       suspect  the instrument is wrong — channels disagreeing, or the network
+                saying it has low confidence in its own figure. Kept out of the
+                chart and the aggregates.
+       extreme  implausibly high, with nothing suggesting a fault. Drawn,
+                counted, and marked. */
+  const flagged = ((seriesData && seriesData.suspect) || []).map(
+    s => ({t: new Date(s.t), pm25: s.pm25, quality: s.quality}));
+  const faults = flagged.filter(r => r.quality === 'suspect');
+  const extremes = flagged.filter(r => r.quality === 'extreme');
+
+  const span = rows => {
+    const days = [...new Set(rows.map(r=>localDateKey(r.t)))].sort();
+    const peak = rows.reduce((a,b) => (b.pm25||0) > (a.pm25||0) ? b : a, rows[0]);
+    return ' on '+days.length+' day'+(days.length>1?'s':'')+', '+days[0]+
+           (days.length>1 ? ' to '+days[days.length-1] : '') +
+           (peak && peak.pm25!=null ? '. Peak '+peak.pm25.toFixed(1)+' µg/m³' : '');
+  };
+
+  if(extremes.length){
+    h += '<div class="note" style="color:var(--poor);margin-top:10px;line-height:1.6">' +
+      '<b>⚠ '+extremes.length+' reading'+(extremes.length>1?'s':'')+' at an extreme ' +
+      'level</b>'+span(extremes)+
+      '. Nothing suggests the instrument was faulty — where a sensor has two channels ' +
+      'they agreed, and the network reported normal confidence. These are counted: they ' +
+      'are drawn on the chart, marked with a triangle where they run off the top of the ' +
+      'scale, and they reach the evening comparison and the alerts. Air this bad is ' +
+      'usually smoke. Treat them as real unless a nearby source disagrees — the source ' +
+      'list marks a reading no neighbour can confirm.</div>';
+  }
+  if(faults.length){
+    h += '<div class="note" style="color:var(--fair);margin-top:10px;line-height:1.6">' +
+      '<b>⚠ '+faults.length+' reading'+(faults.length>1?'s':'')+' flagged as a likely ' +
+      'sensor fault</b>'+span(faults)+
+      '. Flagged when a sensor\'s two channels disagree, or the network reports low ' +
+      'confidence in its own reading — a blocked inlet, a fault, or something burning ' +
+      'directly beside the instrument. These are shown rather than removed, but they are ' +
+      'kept out of the chart and the averages; the "typical" row uses medians so it is ' +
+      'not distorted by them.</div>';
+  }
+  wrap.innerHTML = h;
+}
+
+function dayTable(){
+  const all = byNight();
+  // A full --backfill 365 makes 365 bars, which is unreadable. Show the most recent 30.
+  const nights = all.slice(-30);
+  drawDays(nights);
+  // "worst nights" should search the whole record, not just the charted window
+  const worst = all.filter(n=>n.peak!=null).sort((a,b)=>b.peak-a.peak).slice(0,6);
+  const tb = document.getElementById('worst');
+  if(!worst.length){ tb.innerHTML='<tr><td colspan="4" style="border:0;color:var(--faint)">Building history…</td></tr>'; return; }
+  tb.innerHTML = worst.map(n=>{
+    const b = bandFor(n.peak);
+    const rc = n.ratio==null ? 'var(--faint)' : n.ratio>=1.5?cssVar('--poor'):n.ratio>=1.2?cssVar('--fair'):cssVar('--vgood');
+    return '<tr><td>'+new Date(n.date+'T12:00').toLocaleDateString('en-AU',{weekday:'short',day:'numeric',month:'short'})+'</td>'+
+      '<td class="n" style="color:'+cssVar(b.css)+'">'+Math.round(n.peak)+'</td>'+
+      '<td class="n">'+(n.eve!=null?n.eve.toFixed(1):'—')+'</td>'+
+      '<td class="n" style="color:'+rc+'">'+(n.ratio!=null?n.ratio.toFixed(2)+'×':'—')+'</td></tr>';
+  }).join('');
+}
+
+function todayStats(){
+  const start = new Date(); start.setHours(0,0,0,0);
+  const arr = readings.filter(r=>r.t>=start);
+  const g = id=>document.getElementById(id);
+  if(!arr.length){ ['s_max','s_maxt','s_min','s_eve','s_day','s_prem'].forEach(i=>g(i).textContent='—'); return; }
+  const vals = arr.map(r=>r.v), mx=Math.max(...vals), mn=Math.min(...vals);
+  const mxp = arr.find(r=>r.v===mx);
+  g('s_max').textContent = Math.round(mx)+' ('+bandFor(mx).name+')';
+  g('s_maxt').textContent = mxp.t.toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit'});
+  g('s_min').textContent = Math.round(mn);
+  const mean = a=>a.length?a.reduce((s,x)=>s+x,0)/a.length:null;
+  const eve = mean(arr.filter(r=>inRiskWindow(r.t.getHours())).map(r=>r.v));
+  const day = mean(arr.filter(r=>!inRiskWindow(r.t.getHours())).map(r=>r.v));
+  g('s_eve').textContent = eve==null?'—':eve.toFixed(1);
+  g('s_day').textContent = day==null?'—':day.toFixed(1);
+  if(eve!=null && day>0){
+    const r = eve/day;
+    g('s_prem').textContent = r.toFixed(2)+'×';
+    g('s_prem').style.color = r>=1.5?cssVar('--poor'):r>=1.2?cssVar('--fair'):cssVar('--vgood');
+  } else g('s_prem').textContent='—';
+}
+
+/* ---------------- controls ---------------- */
+/* The embedded PurpleAir widget was removed in v0.5. It was hardwired to one
+   sensor index and one sensor-specific embed key, neither derivable from
+   config, so it showed the original author's sensor to every user. Its stated
+   purpose -- an independent cross-check -- is now served properly by the
+   SOURCES panel, which compares real instruments and says when they disagree. */
+
+/* `b`, not `e.target`. The range buttons now carry a keyboard hint inside
+   them, and a click that lands on that span reports the span as the target
+   -- whose dataset has no `h`, so the range became NaN and the chart emptied
+   depending on which pixel was hit. The button that the handler is bound to
+   is the one that was pressed, whatever was under the cursor. */
+document.querySelectorAll('.rng').forEach(b=> b.onclick = ()=>{
+  document.querySelectorAll('.rng').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');
+  rangeH = parseInt(b.dataset.h,10);
+  drawChart();
+});
+document.querySelectorAll('.hmr').forEach(b=> b.onclick = ()=>{
+  document.querySelectorAll('.hmr').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');
+  hmDays = parseInt(b.dataset.d,10);
+  try{ drawHeatmap(); }catch(err){ console.error(err); }
+});
+const pick = document.getElementById('srcPick');
+if(pick) pick.onchange = e => {
+  viewSource = e.target.value || null;
+  try{ localStorage.setItem('airoViewSource', viewSource || ''); }catch(err){}
+  // Recompute from the payload already held: no refetch, and the headline is
+  // untouched — this changes what is being looked at, not what is claimed.
+  readings = primarySeries(seriesData, latest);
+  render();
+};
+try{ viewSource = localStorage.getItem('airoViewSource') || null; }catch(err){}
+
+// Named for what it fetches. `btnCsv` was left over from the CSV era and the
+// button has served JSON since v0.5 -- an id that describes a format the
+// handler does not produce is a note that will be believed.
+document.getElementById('btnJson').onclick = ()=> location.href='api/series?days=4000';
+
+/* "Refresh", not "Poll now".
+   The button said "Poll now", showed "Polling…", waited 2.5 seconds and then
+   re-read the same files off disk. It never asked anything to poll: the
+   server has no route that would, the agent polls on its own schedule, and
+   the delay existed only to make the pretence look like work. Someone
+   watching a stale reading pressed it, saw "Polling…", and got the same
+   number back -- so the honest reading of that is "my sensor is broken",
+   which is the one conclusion this page must not invite by accident.
+   Re-reading what is on disk is a real and useful thing to do; it is just
+   not a poll, and now it does not claim to be. */
+document.getElementById('btnRefresh').onclick = async ()=>{
+  const b=document.getElementById('btnRefresh');
+  b.textContent='Refreshing…'; b.disabled=true;
+  try{ await loadData(); } finally { b.textContent='Refresh'; b.disabled=false; }
+};
+
+/* Keyboard. Only the keys the status line and the buttons advertise, and
+   only where the control they name really exists -- an advertised shortcut
+   that does nothing is worse than none. Typing in the sensor picker is left
+   alone, or choosing a sensor beginning with "s" would navigate away. */
+function bindKeys(){
+  const refresh = document.getElementById('btnRefresh');
+  const link = document.getElementById('kbRefresh');
+  if(link && refresh) link.onclick = ev => { ev.preventDefault(); refresh.click(); };
+  if(!document.addEventListener) return;
+  document.addEventListener('keydown', ev => {
+    if(ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    const tag = ev.target && ev.target.tagName;
+    if(tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+    if(ev.key === 'r' && refresh){ ev.preventDefault(); refresh.click(); return; }
+    if(ev.key === 's'){ ev.preventDefault(); location.href = '/settings'; return; }
+    const ranged = document.querySelector('.rng[data-key="' + ev.key + '"]');
+    if(ranged){ ev.preventDefault(); ranged.click(); }
+  });
+}
+try{ bindKeys(); }catch(err){ console.error('key bindings failed:', err); }
+
+setInterval(()=>{
+  document.getElementById('clock').textContent = new Date().toLocaleString('en-AU',
+    {weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+  try{ updateStatus(); pollInfo(); }catch(e){}
+},1000);
+
+loadData();
+setInterval(loadData, 60000);          // re-read local files every minute
+</script>
+</body>
+</html>

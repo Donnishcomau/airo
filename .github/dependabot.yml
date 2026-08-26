@@ -1,0 +1,50 @@
+# Two ecosystems, because there are two.
+#
+# There is no `pip` entry. The Python side has no runtime dependencies at all
+# (DECISIONS.md D1) and there is no requirements file to watch — adding one so a
+# scanner has something to read would itself be the dependency.
+#
+# `tray/` is the real supply chain: the Rust tray pulls Tauri and its tree, and
+# a bundled Python runtime is pinned and checksummed by `tools/fetch_runtime.py`
+# rather than resolved, so that one is handled where it is fetched. The
+# workflows are the other place third-party code runs with access to this
+# repository.
+#
+# Weekly and grouped on purpose. A security alert has to stand out, and it
+# cannot if it arrives in the same inbox as five routine bumps a week. Majors
+# are left out of the cargo group deliberately — a Tauri major is a change worth
+# reading on its own, not one line in a batch.
+#
+# Note for whoever merges one: the `sign-off` CI job exempts commits whose
+# author is a bot (`[bot]`) — a bot cannot sign the CLA, and its version pins
+# carry no copyrightable expression to grant (CLA.md §Automated commits).
+# Human commits in the same pull request still need their sign-off.
+version: 2
+
+updates:
+  - package-ecosystem: cargo
+    directory: /tray
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: tray
+    groups:
+      tray-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns:
+          - "*"
