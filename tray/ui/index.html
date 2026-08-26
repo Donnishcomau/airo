@@ -209,6 +209,13 @@ const COLOURS = {
 const colour = b => COLOURS[b] || "#888888";
 const el = id => document.getElementById(id);
 
+// Site names, provenance and notes are provider-supplied text, not markup --
+// the poller treats the same strings as untrusted where they reach a shell,
+// and dashboard.html carries this identical helper for its innerHTML sites.
+// Every innerHTML below that carries provider text goes through it.
+const esc = v => String(v == null ? "" : v).replace(/[&<>"']/g,
+  c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+
 function render(d) {
   el("loc").textContent = d.location_name || "";
   el("title").textContent = d.scale_label ? `Airo — ${d.scale_label}` : "Airo";
@@ -224,16 +231,16 @@ function render(d) {
     ? `${d.pm25_10min.toFixed(1)} µg/m³` : "";
 
   const bits = [];
-  if (d.provenance) bits.push(d.provenance);
-  if (d.fusion_rule) bits.push(`rule: ${d.fusion_rule}`);
-  if (d.fusion_note) bits.push(d.fusion_note);
+  if (d.provenance) bits.push(esc(d.provenance));
+  if (d.fusion_rule) bits.push(`rule: ${esc(d.fusion_rule)}`);
+  if (d.fusion_note) bits.push(esc(d.fusion_note));
   el("prov").style.display =
     (bits.length || d.uncorroborated || d.fusion_degraded) ? "" : "none";
   el("prov").innerHTML = bits.join(" · ")
     + (d.fusion_degraded ? ' <span class="warn">⚠ some sources stale</span>' : "")
     + (d.uncorroborated
         ? '<div class="alert"><b>⚠ Not confirmed by nearby sources.</b> '
-          + (d.corroboration_note || "") + '</div>'
+          + esc(d.corroboration_note || "") + '</div>'
         : "");
 
   // Rolling averages. Both the index and the raw concentration it came from,
@@ -277,7 +284,7 @@ function render(d) {
   el("sources").innerHTML = srcs.map(s => `
     <tr class="${s.stale ? "stale" : ""}">
       <td><span class="dot" style="background:${colour(s.band)}"></span>${
-        s.site_name || s.provider || "unknown"
+        esc(s.site_name || s.provider || "unknown")
       }${s.quality === "suspect" ? '<span class="tag">sensor fault</span>' : ""
       }${s.corroboration === "uncorroborated" ? '<span class="tag">unconfirmed</span>' : ""
       }${s.stale ? '<span class="tag">stale</span>' : ""}</td>
