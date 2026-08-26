@@ -1086,6 +1086,13 @@ def _data_dir(v, field):
     return message
 
 
+SITE_ID_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyz"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "0123456789._-"
+)
+
+
 def _sources(v, field):
     if not isinstance(v, list):
         raise Invalid(f"{field}: expected a list of sources")
@@ -1101,13 +1108,23 @@ def _sources(v, field):
             # into the same object that gets echoed back and logged on error.
             raise Invalid(f"{where}: {leaked[0]} is set through the keys route, "
                           f"not with the rest of the settings")
-        if not str(src.get("site_id") or "").strip():
+        site_id = str(src.get("site_id") or "").strip()
+        if not site_id:
             raise Invalid(f"{where}: site_id is required")
+        # Every provider's id is a number or a short slug, but nothing upstream
+        # guarantees that: a site_id arrives from a discovery response and ends
+        # up in a CSV filename (store.export_csv) and in the dashboard's source
+        # picker. Guarding the charset once, here, where the value enters, is
+        # smaller than escaping it at each sink and covers sinks added later.
+        if len(site_id) > 64 or set(site_id) - SITE_ID_CHARS:
+            raise Invalid(f"{where}: site_id may only contain letters, digits, "
+                          f"dot, dash and underscore, up to 64 characters")
         provider = str(src.get("provider") or "").strip().lower()
         if provider not in PROVIDERS:
             raise Invalid(f"{where}: unknown provider {provider or '(none)'}; "
                           f"known: {', '.join(sorted(PROVIDERS))}")
         clean = dict(src)
+        clean["site_id"] = site_id
         clean["provider"] = provider
         clean["enabled"] = bool(src.get("enabled", True))
         out.append(clean)
@@ -5577,9 +5594,11 @@ class QuietHandler(SimpleHTTPRequestHandler):
                 return self._json({"error": "no reading yet"}, 404)
 
             if parsed.path == "/api/settings":
-                # Read-only for now. Writing settings needs the cross-origin
-                # defences that do not exist yet -- any page in the user's
-                # browser can reach a loopback server.
+                # GET is the read side. Writing goes through do_POST, which
+                # runs the cross-origin chain first -- loopback Host, Origin,
+                # JSON Content-Type, then the per-process X-Airo-Token --
+                # because any page in the user's browser can reach a loopback
+                # server, and only the page this process served has the token.
                 return self._json(settings_payload(cfg))
 
             if parsed.path == "/api/indoor":
