@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Retention, data location, and the promise that nothing deletes silently.
 
 Rule 5 says the poller must never lose data. That is not only about crashes:

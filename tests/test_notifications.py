@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Alerts have to reach a person on every platform Airo installs on.
 
 `notify()` shelled straight to `osascript`. On Linux and Windows that raises

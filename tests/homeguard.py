@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """No test may write into the developer's own ~/.airo.
 
 CONVENTIONS is explicit: *never mutate the developer's own `~/.airo` from

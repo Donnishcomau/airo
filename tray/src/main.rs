@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Airo tray — a menu-bar / system-tray readout for macOS, Windows and Linux.
 //!
 //! Replaces the macOS-only SwiftBar and Ubersicht widgets with one binary that behaves the

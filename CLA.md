@@ -134,7 +134,10 @@ unexplained asymmetry in a contribution rule reads badly, and should.
 
 The CI check runs on pull requests, which is how contributions from anyone else
 arrive. It does not run on direct pushes to `main`, which only the copyright
-holder can make.
+holder can make — and that is now a setting rather than a description: `main` is
+protected, requiring a pull request, an approving review and every CI check
+above, with administrators exempt so the holder can still push directly. Anyone
+else's work therefore arrives through a pull request and past this gate.
 
 ## Automated commits
 

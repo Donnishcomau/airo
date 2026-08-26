@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """AQI scale conversion tests.
 
 Getting a breakpoint wrong here misreports air quality to someone who may be

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """ROADMAP #9 Phase C — a six-hour outlook, and the right to give one.
 
 The guardrails shipped a year before the feature, deliberately. `forecast.py`

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Assemble exactly what the installed app ships, in one place.
 
 Why a staging directory rather than pointing the bundler at the repository

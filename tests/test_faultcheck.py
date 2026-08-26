@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """The fault-injection harness, which exists because doing it by hand lied.
 
 `tools/faultcheck.py` breaks something on purpose and checks a test notices.

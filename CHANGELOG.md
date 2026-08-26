@@ -9,6 +9,38 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **Every source file states its own licence.** Two SPDX lines — the copyright holder and
+  `AGPL-3.0-or-later` — now head every tracked `.py` and `.rs`. LICENSE has always quoted the
+  FSF's guidance to attach a notice to the start of each file; only the root LICENSE actually
+  carried one, so a module pasted into a gist arrived stating nothing about what it is.
+  `test_contracts.py::TestEverySourceFileCarriesItsLicence` enumerates the tree by extension
+  off `git ls-files` rather than from a list, and checks `tray/Cargo.toml` and
+  `tauri.conf.json` still name the same licence, so one legal fact has one source.
+
+### Fixed
+
+- **The install instructions named a file that has never existed.** README told a first-time
+  installer to download `Airo.dmg`. Every release asset carries its version and architecture
+  in the name, so there has never been a file called that — the very first step of the very
+  first install, for the readers least able to work around it.
+- **The data-quality issue template applies its label again.** The template asked for
+  `data-quality` and the label had never been created, so filing one silently dropped it.
+
+### Changed
+
+- CI declares `permissions: contents: read`. Nothing in that workflow publishes anything;
+  `release.yml`, which does, already declared what it needs.
+- ROADMAP's "Publish from a fresh history" moved out of `Open`. The repository is public and
+  its history begins at one parentless commit — the item was describing a project that no
+  longer exists, which is the failure ROADMAP's own preamble warns about.
+- ROADMAP's finished table cites the release each item shipped in. Five rows said
+  "CHANGELOG Unreleased", which stopped being true when 0.6.0 was cut and started naming
+  whatever landed next. `test_contracts.py::TestTheRoadmapCitesWhereWorkLanded` refuses a
+  finished item that cites a section which moves, and refuses a version the CHANGELOG has
+  never had — checked at the release, which is the one moment the drift enters.
+
 ---
 
 ## [0.6.1] — 2026-08-26

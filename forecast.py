@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Guardrails for anything Airo says about the future.
 
 There is no forecast yet -- ROADMAP #9 Phase C. This module exists *before*

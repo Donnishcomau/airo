@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //! Reading Airo's state.
 //!
 //! The tray is a *view*. It never polls a provider, never fuses sources and

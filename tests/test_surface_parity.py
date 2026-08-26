@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """The pages against the Python they render.
 
 Two whole classes of silent breakage live in a single-file HTML surface, and

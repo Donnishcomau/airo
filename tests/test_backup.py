@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Backup and restore tests.
 
 A backup is only worth having if it restores. These prove the round trip and,

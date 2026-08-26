@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """The user's timezone, rather than the machine's.
 
 `config.json` has carried a `location.timezone` field since the first version.
