@@ -1009,7 +1009,7 @@ the JSON payload.
 | `notify()` | Per-platform notification — `osascript`, PowerShell toast, `notify-send`. Best-effort, never raises |
 | `get_api_key()` | Resolution order, never echoes the value |
 | `http_get()` / `http_post_json()` | The two request helpers. `X-API-Key` only when there is a key — urllib rejects a `None` header and that broke every keyless provider |
-| `serve_forever()` | `127.0.0.1` static server with `no-store`, plus the read-only JSON API |
+| `serve_forever()` | `127.0.0.1` static server with `no-store`, plus the JSON API — read-only over `GET`, and the settings `POST` routes behind the four-check chain in §5's threat table (loopback `Host` → `Origin` → JSON content type → per-process token) |
 | `current()` / `history()` / `discover()` | The `Provider` contract each network implements. Adding a network is meant to be one class and nothing else (§1) |
 
 ---
