@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Scheduler tests — the cross-platform install paths.
 
 Only one of the three platforms can be exercised on any given machine, so the

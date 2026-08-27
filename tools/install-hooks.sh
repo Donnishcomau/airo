@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
 # Install Airo's git hooks into this checkout.
 #
 # Hooks are per-clone and cannot be committed into .git/hooks, so this has to

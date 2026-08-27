@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Notifications, and the quiet hours that suppress them.
 
 Untested until now, which is uncomfortable for the one feature that wakes

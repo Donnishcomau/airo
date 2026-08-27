@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """One timestamp format, everywhere, forever.
 
 `store.py`'s own docstring says it plainly:

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """End-to-end regression: a whole install, from first poll to restore.
 
 Every other file here tests a part. This one tests the *path between* the

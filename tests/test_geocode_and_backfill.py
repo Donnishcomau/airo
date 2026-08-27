@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Two paths that read somebody else's JSON, neither of them covered.
 
 `geocode()` turns what a person typed into coordinates. It is the only place

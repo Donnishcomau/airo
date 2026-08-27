@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Storage layer tests.
 
 CONVENTIONS.md hard rule #5: any change to the ingest path needs a test proving

@@ -46,7 +46,7 @@ If AGPL does not suit you — you want to embed Airo in a proprietary product,
 run a modified version as a service without publishing your changes, or your
 organisation prohibits AGPL dependencies — a commercial licence is available.
 
-Contact: **quinn@teamdon.com**
+Contact: **quinn@donnish.com.au**
 
 ## Contributing and copyright
 

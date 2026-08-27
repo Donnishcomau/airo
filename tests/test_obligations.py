@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Contractual and consumer-law obligations, enforced by test.
 
 Attribution is required by PurpleAir's Terms of Service §4.8 and by CC BY 4.0

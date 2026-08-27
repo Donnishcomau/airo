@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """The settings API — what a settings UI is allowed to see.
 
 Every configuration path in Airo used to end in a terminal. Replacing that with

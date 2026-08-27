@@ -44,12 +44,13 @@ Nothing else. No accounts, and nothing to install first.
 
 ### 1. Download it
 
-Go to the [releases page](https://github.com/Donnishcomau/airo/releases) and download
-**`Airo.dmg`**. It is around 40 MB.
+Go to the [releases page](https://github.com/Donnishcomau/airo/releases) and download the
+file whose name starts with **`Airo_`** and ends with **`.dmg`** — the rest of the name is
+the version, so it changes with every release. It is around 40 MB.
 
 ### 2. Open the file you downloaded
 
-Double-click `Airo.dmg` in your Downloads folder. A small window opens showing the Airo icon
+Double-click that `.dmg` file in your Downloads folder. A small window opens showing the Airo icon
 next to a shortcut to your Applications folder.
 
 ### 3. Drag Airo onto Applications
@@ -537,7 +538,7 @@ Contributions welcome — this is deliberately small and hackable. Issues tagged
 > data accuracy. All insights and claims are solely made by Airo.
 
 This wording is required by PurpleAir's Terms of Service §7.3 and their
-[Attribution Guide](https://www2.purpleair.com/pages/attribution). If you fork this project,
+[Attribution Guide](https://www.purpleair.com/attribution). If you fork this project,
 substitute your own product name — do not remove it.
 
 Queensland and NSW government data: **CC BY 4.0.** OpenAQ's licence varies per station, which

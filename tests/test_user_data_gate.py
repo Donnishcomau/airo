@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """The gate that fails when the suite writes into the real `~/.airo`.
 
 Four separate routes into the maintainer's own install have been found and

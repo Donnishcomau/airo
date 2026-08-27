@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Whether a key file is actually protected, on every platform.
 
 Rule 2: a key never enters the repository, and the file it lives in is

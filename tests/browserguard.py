@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """No test may open a real browser window.
 
 The counterpart to `netguard`, and it exists for the same reason that one

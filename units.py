@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """What to *show* a measurement in. Never what to store it as.
 
 Rule 6 is not negotiable and this module does not touch it: the database holds

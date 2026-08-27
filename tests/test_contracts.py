@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Donnish Pty Ltd
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """Contracts that enumerate rather than list.
 
 The risk register is only worth what its enforcement covers, and enforcement
@@ -414,6 +417,77 @@ class TestInternalPlanningStaysInternal(unittest.TestCase):
             "the public licensing document lost the terms users must follow")
 
 
+class TestTheRoadmapCitesWhereWorkLanded(unittest.TestCase):
+    """A finished item may not point at `Unreleased`, because `Unreleased`
+    moves out from under it.
+
+    Five rows of the finished table said "CHANGELOG Unreleased" — true on the
+    day each was written, and false the moment 0.6.0 was cut, because
+    promotion renames the heading and the citations do not follow. The rows
+    then named a section holding somebody else's work, and the reader with the
+    best reason to check where a feature shipped got the wrong answer.
+
+    Promotion is the one moment this drift enters, and RELEASING §1.2 is a
+    list of steps a person performs. This project's own position is that a
+    documented rule is an unenforced one: prose is not executable and nobody
+    re-reads it. So the rule is here instead, where cutting a release runs it.
+    """
+
+    HEADING = "## Where the finished items went"
+
+    def finished_table(self):
+        text = read("ROADMAP.md")
+        self.assertIn(
+            self.HEADING, text,
+            "the finished table has been renamed or removed, so this check is "
+            "reading nothing")
+        after = text.split(self.HEADING, 1)[1]
+        table = after.split("\n## ", 1)[0]
+        self.assertGreater(
+            table.count("|"), 20,
+            "the finished table looks empty, which is how a guard goes quiet "
+            "without failing")
+        return table
+
+    @staticmethod
+    def rows_citing_a_moving_section(table):
+        """The predicate, in one place, so the can-fail test below exercises
+        the same code the real check runs rather than a copy of it."""
+        return [line.strip() for line in table.splitlines()
+                if "CHANGELOG Unreleased" in line]
+
+    def test_no_finished_item_cites_a_section_that_moves(self):
+        offenders = self.rows_citing_a_moving_section(self.finished_table())
+        self.assertEqual(
+            [], offenders,
+            "these rows say a finished item shipped in CHANGELOG's Unreleased "
+            "section. Once that section is promoted the citation names "
+            "whatever landed next — cite the version it actually shipped "
+            "in:\n  " + "\n  ".join(offenders))
+
+    def test_every_version_cited_is_a_section_that_exists(self):
+        """The other half. A row may not name a release the CHANGELOG has
+        never had — a typo in a version number reads exactly like a fact."""
+        changelog = read("CHANGELOG.md")
+        headings = set(re.findall(r"^## \[?([0-9]+\.[0-9]+\.[0-9]+)\]?",
+                                  changelog, re.M))
+        self.assertTrue(headings, "no released section found in CHANGELOG.md")
+        cited = set(re.findall(r"CHANGELOG ([0-9]+\.[0-9]+\.[0-9]+)",
+                               self.finished_table()))
+        self.assertEqual(
+            set(), cited - headings,
+            f"the finished table cites CHANGELOG sections that do not exist: "
+            f"{sorted(cited - headings)}")
+
+    def test_the_scan_can_fail(self):
+        """Guards the walk, the way every other enumeration here does. A
+        contract over an empty set passes and means nothing."""
+        table = ("| #1 | A thing | CHANGELOG Unreleased |\n"
+                 "| #2 | Another thing | CHANGELOG 0.6.0 |\n")
+        self.assertEqual(["| #1 | A thing | CHANGELOG Unreleased |"],
+                         self.rows_citing_a_moving_section(table))
+
+
 class TestLatestJsonMatchesWhatTheTrayExpects(unittest.TestCase):
     """latest.json is a contract with a program in another language.
 
@@ -760,6 +834,129 @@ class TestTheZeroDependencyRuleHolds(unittest.TestCase):
                              f"runtime dependencies (rule 1)")
 
 
+
+
+class TestEverySourceFileCarriesItsLicence(unittest.TestCase):
+    """The licence has to travel with the file, not only with the repository.
+
+    LICENSE quotes the FSF's own guidance -- "attach them to the start of each
+    source file" -- and for a long while only the root LICENSE carried the
+    notice. A module pasted into a gist, or lifted into somebody else's tree,
+    then arrives stating nothing about what it is licensed under and offering
+    no way to find out. That is the single case a per-file notice exists for,
+    and it is exactly the case a root LICENSE cannot reach.
+
+    Two SPDX lines, so a machine reads them as readily as a person does.
+
+    The strings live here and nowhere else. `tray/Cargo.toml` and
+    `tauri.conf.json` each already stated the same licence in their own
+    wording, and a legal fact held in three independent copies is the shape
+    this project keeps paying for -- so both are checked against the constants
+    below rather than trusted to still agree with them.
+    """
+
+    HOLDER = "Donnish Pty Ltd"
+    YEAR = "2026"
+    SPDX = "AGPL-3.0-or-later"
+
+    #: How far into a file the notice may sit. Deep enough for a shebang and
+    #: the blank line after it, shallow enough that "at the start of the file"
+    #: still means something -- a notice buried under a docstring is not what
+    #: the FSF guidance asks for and is not what a person skimming a pasted
+    #: snippet will see.
+    HEAD_LINES = 6
+
+    def copyright_line(self):
+        return f"SPDX-FileCopyrightText: {self.YEAR} {self.HOLDER}"
+
+    def licence_line(self):
+        return f"SPDX-License-Identifier: {self.SPDX}"
+
+    def sources(self):
+        """Every tracked source file, read off `git ls-files`.
+
+        By extension over the tracked tree rather than from a curated list.
+        A list of "the files that need a header" stops being true the moment
+        somebody adds one, and it fails silently: the check keeps passing
+        while covering less. `git_tracked()` is the one way this file asks
+        what is in the tree, and it raises rather than returning an empty
+        list when git cannot answer.
+
+        `.html` and `.sh` are in scope alongside `.py` and `.rs` because the
+        pages *are* source here -- the dashboard carries its own chart
+        library -- and a page saved out of a browser or a script copied into
+        another repo is the same pasted-into-a-gist case the class docstring
+        argues from.
+        """
+        out = [ROOT / f for f in git_tracked()
+               if f.endswith((".py", ".rs", ".html", ".sh"))
+               and (ROOT / f).is_file()]
+        self.assertGreater(
+            len(out), 40,
+            "the source walk found almost nothing to check, which is how a "
+            "guard goes quiet without failing")
+        return out
+
+    def test_every_tracked_source_file_carries_both_lines(self):
+        missing = []
+        for path in self.sources():
+            head = "\n".join(
+                path.read_text(encoding="utf-8").splitlines()[:self.HEAD_LINES])
+            if (self.copyright_line() not in head
+                    or self.licence_line() not in head):
+                missing.append(str(path.relative_to(ROOT)))
+        self.assertEqual(
+            [], missing,
+            f"these source files carry no licence notice in their first "
+            f"{self.HEAD_LINES} lines, so a copy of one states nothing about "
+            f"its licence:\n  " + "\n  ".join(missing))
+
+    def test_no_file_states_a_different_licence(self):
+        """A stale header is worse than none: it is a confident wrong answer
+        about what somebody may do with the file."""
+        wrong = []
+        for path in self.sources():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                # Comment lines only. The scan reads its own source too, and
+                # the expression that builds the expected line is not a
+                # licence declaration -- reading it as one made this test
+                # fail on the file that defines it.
+                if not line.lstrip().startswith(("#", "//")):
+                    continue
+                if "SPDX-License-Identifier:" not in line:
+                    continue
+                if line.split("SPDX-License-Identifier:")[1].strip() != self.SPDX:
+                    wrong.append(f"{path.relative_to(ROOT)}: {line.strip()}")
+        self.assertEqual([], wrong,
+                         f"the project is {self.SPDX}: {wrong}")
+
+    def test_the_crate_manifest_names_the_same_licence(self):
+        manifest = (ROOT / "tray" / "Cargo.toml").read_text(encoding="utf-8")
+        self.assertIn(
+            f'license = "{self.SPDX}"', manifest,
+            "tray/Cargo.toml declares a licence the source headers do not")
+
+    def test_the_bundle_copyright_names_the_same_licence_and_holder(self):
+        conf = json.loads(
+            (ROOT / "tray" / "tauri.conf.json").read_text(encoding="utf-8"))
+        stated = conf["bundle"]["copyright"]
+        for token in (self.YEAR, self.HOLDER, self.SPDX):
+            self.assertIn(
+                token, stated,
+                f"tauri.conf.json's copyright is {stated!r}, which does not "
+                f"name {token!r}. It is what a user reads in the installer.")
+
+    def test_the_scan_can_fail(self):
+        """Guards the walk. A contract over an empty set passes and means
+        nothing, which is how three checks here stayed green after the thing
+        they enumerated moved."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            bare = Path(tmp) / "bare.py"
+            bare.write_text("print('no notice here')\n", encoding="utf-8")
+            head = "\n".join(
+                bare.read_text(encoding="utf-8").splitlines()[:self.HEAD_LINES])
+            self.assertNotIn(self.licence_line(), head)
 
 
 class TestNoScriptIsBuiltOutOfAVariable(unittest.TestCase):
