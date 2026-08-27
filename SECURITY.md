@@ -10,6 +10,9 @@ Email **security@donnish.com.au** with:
 - steps to reproduce
 - affected version or commit
 
+If you'd rather not use email, GitHub's private vulnerability reporting is enabled on this
+repository — open the **Security** tab and choose *Report a vulnerability*.
+
 Expect an acknowledgement within a few working days. This is a small side project, not a
 funded product — there's no formal SLA, but reports are taken seriously and you'll be
 credited unless you'd rather not be.
