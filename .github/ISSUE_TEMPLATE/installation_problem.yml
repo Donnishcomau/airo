@@ -1,0 +1,70 @@
+name: Installation problem
+description: Airo will not install, or will not open once installed
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        The first-run warning on macOS is expected and the README says what to do
+        about it: [right-click → Open, not
+        double-click](https://github.com/Donnishcomau/airo/blob/main/README.md#4-open-it--right-click-the-first-time-not-double-click).
+        If that is the message you are seeing, try it before filing — it costs you
+        a minute and it is the answer most of the time.
+
+  - type: input
+    id: os-version
+    attributes:
+      label: Operating system and version
+      description: macOS 15.2, Windows 11 24H2, Ubuntu 24.04.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: download
+    attributes:
+      label: Which file did you download?
+      description: The name is on the releases page, and in your Downloads folder.
+      options:
+        - .dmg (macOS)
+        - .msi (Windows)
+        - .deb (Linux)
+        - .AppImage (Linux)
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: app-version
+    attributes:
+      label: Which version
+      description: The `0.6.1` in `Airo_0.6.1_aarch64.dmg`.
+      placeholder: "0.6.1"
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: >-
+        Where it stopped, and the message you got. Quote the wording exactly if
+        you can — "cannot be opened because it is from an unidentified developer"
+        and "cannot be opened because the developer cannot be verified" are two
+        different situations.
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Screenshot
+      description: >-
+        Drag the image into this box to attach it. A photo of the screen is fine.
+        A picture of the dialog is usually faster than describing it.
+
+  - type: textarea
+    id: anything-else
+    attributes:
+      label: Anything else
+      description: >-
+        Whether an earlier version had ever installed on this machine, and
+        anything managed for you — a work laptop with security software on it
+        behaves differently from your own.

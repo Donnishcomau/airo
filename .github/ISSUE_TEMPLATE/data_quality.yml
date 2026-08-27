@@ -1,0 +1,63 @@
+name: Data quality report
+description: A sensor produced readings that look wrong
+labels: ["data-quality"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        These reports directly improve the quarantine heuristics — see
+        [ROADMAP §6](https://github.com/Donnishcomau/airo/blob/main/ROADMAP.md#6-data-quality--what-is-still-wanted--todo).
+        Low-cost optical sensors genuinely do misbehave, and every example helps.
+
+  - type: input
+    id: sensor
+    attributes:
+      label: Sensor
+      description: >-
+        The index or identifier Airo shows for it, and which network it is on.
+    validations:
+      required: true
+
+  - type: input
+    id: setting
+    attributes:
+      label: Rough location or setting
+      description: Street, balcony, rural — no exact address needed.
+
+  - type: textarea
+    id: readings
+    attributes:
+      label: The readings
+      description: One row per reading that looks wrong.
+      value: |
+        | When (local) | Value | Why it looks wrong |
+        |---|---|---|
+        |  |  |  |
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: pattern
+    attributes:
+      label: Which does it look like?
+      options:
+        - label: Implausibly high (over ~350 µg/m³ sustained)
+        - label: Flat-lined / stuck at one value
+        - label: A and B channels disagreeing
+        - label: Sudden step change with no plausible cause
+        - label: Something else
+
+  - type: textarea
+    id: cross-checks
+    attributes:
+      label: Cross-checks
+      description: >-
+        If you can: what did a nearby sensor, or a government reference monitor,
+        show at the same time? This is the strongest evidence of a fault.
+
+  - type: textarea
+    id: conditions
+    attributes:
+      label: Anything happening at the time?
+      description: >-
+        Fire, hazard reduction burn, dust, roadworks, fog, very high humidity?

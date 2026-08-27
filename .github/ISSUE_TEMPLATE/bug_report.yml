@@ -1,0 +1,86 @@
+name: Bug report
+description: Something isn't working
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        If Airo will not install or will not open at all — a "cannot be opened"
+        message, a SmartScreen warning, a `.deb` that does nothing — use the
+        **Installation problem** form instead. It asks for different things.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What you did, in the order you did it.
+      placeholder: |
+        1.
+        2.
+
+  - type: input
+    id: app-version
+    attributes:
+      label: Airo version
+      description: >-
+        The version is part of the name of the file you downloaded — the `0.6.1`
+        in `Airo_0.6.1_aarch64.dmg`. If you no longer have it, say which release
+        you installed from.
+      placeholder: "0.6.1"
+    validations:
+      required: true
+
+  - type: input
+    id: os-version
+    attributes:
+      label: Operating system and version
+      description: >-
+        macOS 15.2, Windows 11 24H2, Ubuntu 24.04 — and your desktop environment
+        on Linux if the tray icon is involved.
+    validations:
+      required: true
+
+  - type: textarea
+    id: health-check
+    attributes:
+      label: Health check
+      description: >-
+        The menu has **Background agent → Health check…**, which tests every part
+        of the chain and reports what it found in plain words. Paste what it says.
+      render: text
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log lines
+      description: >-
+        From `~/.airo/data/poller.log`, or the data directory you configured.
+        ⚠ Check these for your API key before pasting.
+      render: text
+
+  - type: textarea
+    id: checkout-diagnostics
+    attributes:
+      label: If you run Airo from a checkout
+      description: >-
+        Only if you cloned the repository rather than installing a downloaded
+        file. Output of `python3 poller.py --doctor`, `git rev-parse --short HEAD`,
+        and the tray's `--print-menu` if the tray is involved.
+      render: shell
+
+  - type: textarea
+    id: anything-else
+    attributes:
+      label: Anything else
+      description: >-
+        Screenshots help for dashboard issues. Note that a location-tagged air
+        quality history is personal data — consider trimming a CSV before
+        attaching it.
