@@ -187,19 +187,29 @@ bundle, built from `tray/` into `tray/target/` by the pipeline in §4a. It is al
 Any logger can poll. The thing that makes this trustworthy is that **downtime is repaired
 rather than lost**.
 
-On every poll, `do_poll()`:
+On every poll, for each source in turn, `do_poll()`:
 
-1. reads the newest timestamp in the CSV
-2. if the gap exceeds 25 minutes, calls the PurpleAir **history** endpoint for the missing
-   window at 10-minute resolution
-3. merges those rows in, deduped and sorted
+1. asks the store for that source's newest observation
+2. measures the silence against `gap_threshold_for()` — the provider's own reporting
+   interval, or the poll interval if that is longer, scaled by fusion's staleness
+   tolerance. A flat 25 minutes suited PurpleAir's 10-minute average and fired on every
+   poll against an hourly regulatory feed, where half an hour of quiet is what normal
+   looks like
+3. if the gap is real, calls `backfill_source()`, which asks *that provider's* history
+   endpoint for the missing window — every `Provider` implements one, so repair is not a
+   PurpleAir privilege
 4. then takes the live reading
+
+A source with no readings at all is seeded instead, `backfill_days_on_first_run` deep.
 
 So a Mac asleep from 6pm to midnight loses nothing — the next poll recovers those six hours.
 This is why the tool can make claims about "the whole week" without an always-on machine.
 
-History is fetched in **2-day chunks** to stay inside API limits, with a 1-second pause
-between calls.
+Repair is safe to repeat: the refetch starts two reporting intervals *before* the last
+known reading, so a half-written interval is redone rather than straddled, and inserts are
+idempotent on `(source_id, observed_utc)`, which makes the overlap free. How a window is
+chunked is each provider's own business — PurpleAir splits it into 2-day requests, with a
+pause between them, to stay inside its limits.
 
 ### 2.4 Alerting is threshold + trend, with hysteresis
 
@@ -225,8 +235,10 @@ Script Editor in Notification settings. Posting from the bundle itself would fix
 on the roadmap.
 
 The default threshold of **67** is not arbitrary — it is exactly the lower bound of the amber
-band on the Australian scale (16.75 µg/m³). If the scale becomes configurable
-([ROADMAP #4](ROADMAP.md)), this default must move with it.
+band on the Australian scale (16.75 µg/m³). The scale is configurable (§4) and this default
+does **not** move with it: `threshold_aqi` is read in whatever scale is set, so a config
+tuned for Australia means something else entirely under US EPA. `threshold_pm25` is the
+scale-independent form, and it wins when both are set.
 
 ### 2.4a Units are a display concern, resolved per quantity
 
@@ -978,7 +990,7 @@ pasted into bug reports.
 | `tray/` | The only widget. Tauri/Rust, cross-platform. Reads `~/.airo/data/latest.json` and renders it; `--print-menu` prints the readout without a window server. |
 | `~/.airo/data/` | Readings, `latest.json`, logs. Outside the checkout since v0.6; a `data/` inside it is pre-v0.6 and gitignored. |
 | `Airo.app/` | A leftover from the deleted shell installer; nothing rebuilds it. `scheduler.py install` uses one if it is already there and otherwise runs `poller.py` directly. Gitignored — it contains absolute paths. Not the shipped app, which is the Tauri bundle under `tray/target/`. §2.2. |
-| `tools/check.py` | The seven gates. What CI runs; run it before every push. §7a. |
+| `tools/check.py` | The gates. What CI runs; run it before every push. §7a. |
 | `tools/faultcheck.py` | Breaks the product on purpose and reports which tests notice. §7a. |
 | `tools/faults/*.json` | The committed faults, run by CI on every push. |
 | `tools/stage_bundle.py` | Stages the payload the tray bundles. |
@@ -1014,8 +1026,6 @@ the JSON payload.
 
 ---
 
----
-
 ## 7a. Testing
 
 About 1,760 Python tests across 34 files, plus 46 Rust tests for the tray. `unittest`
@@ -1027,10 +1037,12 @@ true. A document that states something false is worse than one that is silent, b
 the reader believes it. If you find another claim here that has rotted, fix it in the
 same commit as whatever you came to do.)*
 
-### The seven gates
+### The gates
 
 `tools/check.py` reports all of them rather than stopping at the first failure, because
-two failures found together are cheaper than two rounds.
+two failures found together are cheaper than two rounds. It prints how many it is about to
+run rather than stating a number here — `--tz-sweep` and `--faults` add one each, and a
+count written down is a count that goes stale.
 
 | Gate | What it protects |
 |---|---|
@@ -1039,6 +1051,7 @@ two failures found together are cheaper than two rounds.
 | json | Config and Tauri manifests parse |
 | page scripts | The pages' inline JavaScript parses (`node --check`) |
 | policy | No shell scripts at the root, no manifests, **no user data in the repo** |
+| secrets | No credentials file tracked, and no key shape pasted into a source file, fixture or JSON example. Read off `git ls-files`, and it never echoes what it matched |
 | rust | The tray |
 | coverage | A floor per module, measured on Linux/3.12 and recorded in `tools/coverage-floor.json` |
 
