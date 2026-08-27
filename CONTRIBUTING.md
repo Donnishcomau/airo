@@ -67,9 +67,8 @@ python3 poller.py --list-sources    # works before any configuration
 python3 -m unittest discover -s tests -v
 ```
 
-The hook is the user-data guard: it refuses a database, a log, a real config or a key
-*before* it becomes a commit somebody has to rewrite history to remove. Hooks are per-clone
-and cannot be committed, so nothing installs it for you.
+The hook is the user-data guard, and it is per clone, so nothing installs it for you —
+CONVENTIONS' first item for coding agents says what it stops and why that matters.
 
 To develop without touching your installed agent or your real data, point the module at a
 scratch directory:
@@ -173,8 +172,8 @@ trusting a feed's query parameters.
 - Explain the *reasoning*, not just the change. Commit messages in imperative mood.
 - Run the verification block in [CONVENTIONS.md](CONVENTIONS.md) before pushing.
 - If you change behaviour a user could notice, update the README in the same PR.
-- Merging needs one approving review and every required CI check green. `main` is protected;
-  there is no other route in.
+- Merging needs one approving review and every required CI check green. `main` is protected,
+  so a contribution has no other route in.
 
 Issues tagged `good first issue` are a reasonable entry point once the tracker
 has some; until then, [ROADMAP.md](ROADMAP.md) says what is open and why.
