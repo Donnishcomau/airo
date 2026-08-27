@@ -50,19 +50,11 @@ Contact: **quinn@donnish.com.au**
 
 ## Contributing and copyright
 
-Contributions are accepted under the AGPL. Because the project is dual-licensed,
-contributors also grant a **sublicensable** licence, which is what allows the
-same code to be offered commercially — without it the commercial option cannot
-exist for the project at all, not just for that contribution.
-
-The terms are in **[CLA.md](CLA.md)**, agreed by signing off each commit
-(`git commit -s`). Contributors keep their copyright; it is a licence, not an
-assignment. CI enforces the sign-off on every pull request.
-
-If you are not comfortable with that, please say so in your pull request. There
-is useful work that involves no licence grant at all — see
-[CONTRIBUTING.md](CONTRIBUTING.md) — and it is much better to raise it early
-than after the work is done.
+Contributions are accepted under the AGPL, and contributors also grant a
+**sublicensable** licence — the thing that allows the same code to be offered
+commercially. The terms are in **[CLA.md](CLA.md)**, agreed by signing off each
+commit; contributors keep their copyright, and [CONTRIBUTING.md](CONTRIBUTING.md)
+is where the process lives.
 
 ---
 

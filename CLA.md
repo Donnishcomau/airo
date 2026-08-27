@@ -6,7 +6,9 @@ the whole of it matters, so it is worth the two minutes.
 > **Not legal advice, and not yet reviewed by a lawyer.** This document was
 > drafted to be honest and readable rather than to be bulletproof. Before the
 > first external contribution is merged it should be reviewed by someone
-> qualified — see [ROADMAP.md](ROADMAP.md) #3a. If you are contributing on
+> qualified — the item is in
+> [ROADMAP's finished table](ROADMAP.md#where-the-finished-items-went), with the
+> review itself still outstanding. If you are contributing on
 > behalf of an employer, check with them regardless of what this says.
 
 ---

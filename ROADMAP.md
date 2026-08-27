@@ -20,7 +20,7 @@ Airo works end to end from a clean clone and an empty home: setup by street
 address, coverage-aware network choice, live probing so a dead station is never
 recommended, first poll, dashboard, tray, alerts, weather capture, a correlation
 computed over your own record, and a six-hour outlook that stays silent until it
-has earned the right to speak. At least 1493 Python tests and 46 Rust tests,
+has earned the right to speak. A large test suite — sized in ARCHITECTURE §7a —
 green on macOS, Windows and Linux across two Python versions.
 
 On macOS nothing a user needs requires a terminal: a `.dmg` carrying its own
@@ -278,7 +278,7 @@ never a trap.
 | **A temperature whose unit is not recorded.** Found 6 Aug 2026 while checking whether the end-to-end invariants could actually fail — the Fahrenheit one could not, because no journey ever stored a temperature | `backfill_source()` normalises through `to_celsius()` and labels the row, the provider declares its own unit so no call site decides it from a name, a v7 migration repairs existing rows keyed on the unit being absent, and the journey invariant now fails on a temperature with no unit rather than only on one labelled `F` — which is the state that was actually dangerous, since an absent label leaves no evidence a migration could act on | `test_store.py`, `test_end_to_end.py` |
 | **A forecast without reasonable grounds (ACL s4), now that there is one.** The guardrails shipped a year before the feature; Phase C is the part that has to earn its way past them | The outlook is gated on measured skill and stays silent at 29 verified outcomes, speaking at 30 — both sides tested, because a gate that never opens is a disabled feature and one that always opens is not a gate. It is scored against persistence, so beating autocorrelation is not mistaken for skill. Its grounds are the user's **own** wind bands with the hour count stated, reusing Phase B's table so the two cannot disagree. Predictions are written down and verified against what actually happened — an hour with no reading stays pending rather than being scored against a gap, and nothing is counted twice. PurpleAir is excluded from training by construction (ToS §4.4) and the refusal says so, which is a different sentence from "no data yet" | `test_forecast_outlook.py` |
 | A new surface, module or provider added without its guards | Contracts enumerate from disk and from `PROVIDERS` rather than from a list, so a file that does not exist yet is already in scope | `test_contracts.py` |
-| Contributor onboarding cost | at least 1493 Python and 46 Rust tests, no runtime dependencies, no build step | CI |
+| Contributor onboarding cost | Python and Rust suites both large (ARCHITECTURE §7a), no runtime dependencies, no build step | CI |
 | **A finished item pointing at a section that has moved.** Five rows of the finished table cited "CHANGELOG Unreleased" — true on the day each was written, and false the moment 0.6.0 was cut, because promotion renames the heading and the citations do not follow. The table then sent the reader with the best reason to check where a feature shipped to somebody else's release notes | A finished item must cite a released version, and every version it cites must be a section the CHANGELOG actually has. Enforced at the moment the drift enters — cutting a release runs the check — rather than written down as another step in RELEASING §1.2, which is prose and cannot fail | `test_contracts.py::TestTheRoadmapCitesWhereWorkLanded` |
 
 ### Not mitigated, deliberately
