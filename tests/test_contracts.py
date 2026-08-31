@@ -3771,14 +3771,25 @@ class TestDocsMatchTheCode(unittest.TestCase):
         for heading in ("## Legal — PurpleAir terms", "## The hosted service"):
             self.assertNotIn(heading, s)
 
-    def test_the_layout_table_lists_every_shipped_module(self):
-        """CONVENTIONS.md's layout table is the map a new contributor reads
-        first. A module missing from it is a module nobody knows exists --
-        forecast.py sat unlisted after it was added."""
-        conventions = (ROOT / "CONVENTIONS.md").read_text(encoding="utf-8")
-        for mod in sorted(p.name for p in ROOT.glob("*.py")):
-            self.assertIn(mod, conventions,
-                          f"{mod} is not mentioned anywhere in CONVENTIONS.md")
+    def test_the_docs_lead_a_reader_to_the_file_map(self):
+        """The map a new contributor reads has one home: ARCHITECTURE §6.
+
+        CONVENTIONS and CONTRIBUTING each carried their own layout table, and
+        the copies drifted in both directions -- forecast.py sat unlisted in
+        one after it was added, while §6 listed poller.py twice. Checking that
+        each copy is complete only guarantees three tables that disagree
+        politely, so the copies are gone and this checks the pointers instead.
+
+        Completeness of the map itself is
+        test_the_architecture_layout_table_is_complete, which is stricter than
+        what this replaced: it fails on a module missing from the table *and*
+        on a table row naming a module that no longer exists.
+        """
+        for name in ("CONVENTIONS.md", "CONTRIBUTING.md"):
+            text = (ROOT / name).read_text(encoding="utf-8")
+            self.assertIn("ARCHITECTURE §6", text,
+                          f"{name} no longer points at the file map, so a "
+                          f"reader who starts there never finds it")
 
     #: A heading that opens by naming one module -- `### `poller.py` internals`.
     #: Only tables under such a heading are read. Prose is deliberately out of

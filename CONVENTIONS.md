@@ -8,9 +8,8 @@ Local, multi-source air quality monitoring for macOS, Windows and Linux. Polls e
 configured source on an interval, stores readings in SQLite, fuses them into one honest
 number with provenance, and alerts when air quality worsens.
 
-**Read [ARCHITECTURE.md](ARCHITECTURE.md) before changing anything structural** — especially
-§2.5a (why the store is SQLite), §2.5b (why fusion is a decision, not a calculation), and §3,
-which documents bugs that have already shipped once and are easy to reintroduce.
+New here? [CONTRIBUTING.md](CONTRIBUTING.md) is the front door — what to read, in what order,
+and how to set up. This file is the rules themselves.
 
 ## If you are a coding agent
 
@@ -77,7 +76,9 @@ failed push or a repository that needs its history rewritten — not a note in r
    (`./tools/install-hooks.sh`), and CI. The narrow version of this rule already failed once:
    `data/` did not match `data.migrated-<timestamp>/`, and 16,995 rows of location history
    were committed. **Match by shape, never by one known path.** See ARCHITECTURE §2.5d.
-4. **Don't remove attribution or the health disclaimer** from README, dashboard or tray. Required by PurpleAir ToS §4.8/§7.3 and by CC BY for government feeds.
+4. **Don't remove attribution or the health disclaimer** from README, dashboard or tray. The
+   provider terms that require them, and what else those terms forbid, are in
+   [LICENSING.md](LICENSING.md). Enforced by `test_obligations.py`.
 5. **The poller must never lose data.** Any change to `store.insert_readings()`,
    `backfill_source()` or `do_poll()` needs a test proving gaps are still detected and
    repaired. See `tests/test_store.py::TestGapRepair`.
@@ -105,6 +106,7 @@ failed push or a repository that needs its history rewritten — not a note in r
   `insert_readings`, `aqi_for`); `--repair` corrects databases written before that.
 - **PurpleAir nests rolling averages under `stats`**, not at the top level. Reading the top
   level silently returns `None`. Use the `field()` helper in `PurpleAirProvider.current()`.
+  ARCHITECTURE §3.1.
 - **The QLD API silently ignores unknown query parameters.** `from_date`/`to_date` are wrong —
   it wants `start_date`/`end_date` — and it returns the most recent 1000 rows instead of the
   window you asked for. Wrong data, no error. Always verify a date filter actually filtered.
@@ -147,16 +149,17 @@ failed push or a repository that needs its history rewritten — not a note in r
 - **Gap thresholds must scale with the provider's cadence.** A fixed 25 minutes is right for
   PurpleAir's 10-minute average and fires on *every poll* against an hourly feed.
 - **`toISOString()` corrupts day-bucketing.** It converts to UTC, so in UTC+10 a 9am reading
-  lands on the previous date. Always use `localDateKey()`.
+  lands on the previous date. Always use `localDateKey()`. ARCHITECTURE §3.2.
 - **The dashboard chart renderer is local canvas, not Chart.js.** ~330 lines at the top of the
   inline script, supporting one line chart and one bar chart. Don't reintroduce a CDN: it
   leaked the viewer's IP, made a local tool need the internet to draw local data, and
   `test_contracts.py` fails on any external subresource. The x-axis stays a linear scale over
   epoch-ms with custom tick generation — the renderer has no date handling, and that tick
-  generation is what keeps day steps on calendar boundaries across DST.
+  generation is what keeps day steps on calendar boundaries across DST. ARCHITECTURE §3.3.
 - **Every dashboard render step runs in its own `try/catch`.** One failure previously blanked
   four unrelated panels.
 - **Band colour must match the displayed rounded value** — `bandFor(Math.round(v))`.
+  ARCHITECTURE §3.4.
 - **A registered launchd agent is not necessarily *this* checkout's.** The label is fixed, so
   with two clones — or a moved folder — `launchctl` reports the other install as healthy while
   this one never runs. `poller.py --doctor` compares the agent's `WorkingDirectory` against the project
@@ -167,26 +170,8 @@ failed push or a repository that needs its history rewritten — not a note in r
 
 ## Layout
 
-| Path | Role |
-|---|---|
-| `poller.py` | Providers, polling, fusion wiring, alerting, HTTP server + JSON API, CLI |
-| `store.py` | SQLite schema, ingest, dedup, series/bucketing, export, CSV migration |
-| `fusion.py` | Choosing one number from several sources, plus corroboration. Safety-critical — see ARCHITECTURE §2.5b, §2.5c |
-| `weather.py` | Hourly wind, temperature, humidity and pressure from Open-Meteo — the *cause* the readings are the effect of. Capture, backfill and the forward hours a forecast reasons over. ROADMAP #9 Phase A |
-| `forecast.py` | Guardrails for anything said about the future, and the six-hour outlook that earns its way past them. ROADMAP #9 Phase C |
-| `units.py` | What to *show* a measurement in, never what to store it as. A display unit per quantity from the reader's region, config override winning. Rule 6 is untouched: µg/m³, Celsius, m/s and km stay canonical in the database |
-| `scheduler.py` | Cross-platform background scheduling: launchd, systemd, Task Scheduler |
-| `dashboard.html` | Single-file UI, no build step, no external assets |
-| `settings.html` | The settings UI, served by `poller.py` with a per-process token substituted in. Same constraints as the dashboard |
-| `tools/` | Development scripts, not shipped: `check.py` (every gate CI runs), `faultcheck.py` + `faults/*.json` (break it on purpose, confirm a test notices), `stage_bundle.py`, `fetch_runtime.py`, `demo.py` |
-| `tray/` | Tauri tray for macOS/Windows/Linux. `cargo build --release`; 46 Rust tests. `airo-tray --print-menu` prints the readout without a window server |
-| `backup.py` | Portable export/restore of config + readings. Keys excluded unless asked |
-| `analyse.py` | Evening-premium analysis and corroboration-threshold tuning, from the CLI |
-| `tests/` | `unittest`, no dependencies. Run before every commit. `*guard.py` are the side-effect blocks — home, network, browser, notifications, session manager — installed per module because discovery gives no shared package |
-| `poller.py`, `scheduler.py install`, `poller.py --doctor` | macOS control surface and installer |
-| `config.example.json` | Shipped template, no real values. Real settings: `~/.airo/config.json` |
-| `setup.py` | First-run wizard: geocodes a place, discovers nearby monitors, writes the config |
-| `~/.airo/` | Settings, readings and keys. Outside the checkout by design |
+The file map — every shipped module, the pages, `tools/`, `tray/`, `tests/` and what lives
+under `~/.airo/` — is **ARCHITECTURE §6**, and only there. A second copy went stale twice.
 
 ## Commands
 
@@ -260,10 +245,10 @@ pathlib.Path('/tmp/d.js').write_text(js)" && node --check /tmp/d.js
 - v0.5 added: SQLite store, multi-source fusion, four providers, configurable scales,
   cross-platform scheduling, AGPL relicence, Tauri tray. Since then: sentinel rejection,
   a local chart renderer replacing the CDN, configurable `data_dir` with orphan
-  detection, `--repair`, forecast guardrails, and enumerating contract tests —
-  at least 1493 Python tests and 46 Rust tests — a floor, asserted, so adding
-  tests needs no documentation edit and removing them fails loudly. See
-  `test_contracts.py::TestDocsMatchTheCode`.
+  detection, `--repair`, forecast guardrails, and enumerating contract tests. How big the
+  suite is now is stated once, in ARCHITECTURE §7a, and held to a floor by
+  `test_contracts.py::TestDocsMatchTheCode` — so adding tests needs no documentation edit
+  and removing them fails loudly.
 - The tray builds and runs; installed via `python3 scheduler.py install-tray`. CI compiles and
   tests it on all three platforms and rejects numeric air-quality comparisons in Rust.
 - Roadmap priorities: the two open items anyone can pick up are what is still wanted from

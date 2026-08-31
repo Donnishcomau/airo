@@ -20,14 +20,8 @@ know" over showing something plausible.
 
 ### Read in this order
 
-| # | Read | For |
-|---|---|---|
-| 1 | [CONVENTIONS.md](CONVENTIONS.md) | The hard rules, the traps that have already bitten, and the verification block to run before committing |
-| 2 | §1 below | How the pieces fit together |
-| 3 | §2.5a, §2.5b, §2.5c, §2.5e | The four decisions most often undone by accident: why SQLite, why fusion is a decision, why a flagged reading is shown rather than hidden, and why an indoor sensor never speaks for the air outside |
-| 4 | §3 | Bugs that have shipped once. Each is easy to reintroduce |
-| 5 | §7a | How this is tested, and the mistakes the test suite is shaped around. Read before writing a test here |
-| 6 | [ROADMAP.md](ROADMAP.md) | What is planned, what is deliberately not being done, and the risk register |
+The reading order, and everything else a new contributor needs, is in
+[CONTRIBUTING.md](CONTRIBUTING.md) — one front door rather than three.
 
 ### Invariants — break these and something is wrong that tests may not catch
 
@@ -939,18 +933,10 @@ trusted, because the runtime tree is copied wholesale and the list is a human ar
 
 ## 5. Security model
 
-| Concern | Approach |
-|---|---|
-| API key at rest | `~/.airo/apikey`, mode `600`, **outside the repo** so it can't be committed or synced |
-| Key in transit | `X-API-Key` header over HTTPS; never a query parameter |
-| Key in logs | Never logged, never printed, never included in error output |
-| Network exposure | Server binds `127.0.0.1` only, and only runs on demand |
-| **Another page reaching the server** | Binding to loopback keeps other *machines* out, not other *pages*: every site the user visits can reach it from inside their browser. Four independent checks on any mutating request — a loopback `Host` (a name the attacker owns, resolved to 127.0.0.1, is same-origin to the browser, so an origin check never sees it), our own `Origin`, a JSON content type so the request cannot be a preflight-free CORS "simple request", and a per-process token the settings page is handed when it is served. The `Host` check applies to reads too, because `/api/settings` describes the user's location |
-| **The settings token** | Generated per process, never written to disk, never fetchable. A restart invalidates it, and the page says "reload" rather than "forbidden" |
-| **Opening a native dialog** | `/api/choose-folder` puts a window on the user's desktop, so it sits behind the same guards as a write |
-| Privilege | A user `LaunchAgent`. No root, no `LaunchDaemon`, no `sudo` anywhere |
-| Environment | The plist sets a minimal explicit `PATH` rather than inheriting the shell |
-| Data | Everything stays local. Outbound connections go only to the provider and weather hosts the configured sources need — the complete list is the hostname table in [SECURITY.md](SECURITY.md) |
+The threat model is [SECURITY.md](SECURITY.md) — keys, network exposure, the checks on a
+mutating request, privileges, the hosts the code contacts. A second copy here had drifted
+twice, and a security document that is wrong is worse than one that is silent. What follows
+is only the part that is about code topology rather than about the model.
 
 Key resolution order is env var → `~/.airo/<provider>.key` → the legacy
 `~/.airo/apikey`. A **private** PurpleAir sensor is the exception: its
@@ -969,32 +955,40 @@ pasted into bug reports.
 
 ## 6. File map
 
+Every module, page and directory, in one place. CONVENTIONS and CONTRIBUTING point here
+rather than keeping their own copies — the second copy listed `poller.py` twice and went
+three modules stale before anybody noticed.
+
 | Path | Role |
 |---|---|
-| `poller.py` | Providers, polling, backfill, fusion wiring, alerting, HTTP server, CLI. Once "everything data"; the store and the fusion decision have since been separated out. |
+| `poller.py` | **The single control surface.** Providers, polling, backfill, fusion wiring, alerting, the `127.0.0.1` server and JSON API, and the CLI: start/stop/restart, poll, alerts, backfill, logs. Once "everything data"; the store and the fusion decision have since been separated out. |
 | `store.py` | SQLite schema and every read or write of it. Ingest, dedup, gap detection, series and bucketing, export, retention, integrity checks. |
 | `fusion.py` | Choosing one number from several sources, and corroborating it. Safety-critical — §2.5b, §2.5c. |
 | `weather.py` | Hourly wind, temperature, humidity and pressure from Open-Meteo — the *cause* the readings are the effect of. Capture and backfill only; it correlates nothing and forecasts nothing. ROADMAP #9 Phase A. |
 | `forecast.py` | Guardrails for anything said about the future, and the six-hour outlook that has to earn its way past them: hedged wording, a stated basis, silence until skill is measured over 30 verified outcomes, PurpleAir excluded from training by construction. ROADMAP #9 Phase C. |
 | `units.py` | What to *show* a measurement in, never what to store it as. Resolves a display unit per quantity from the reader's region, with an explicit config override winning. Nothing here writes: rule 6 keeps µg/m³, Celsius, m/s and km canonical in the database, and every conversion is exactly invertible. |
 | `setup.py` | First-run wizard: geocode, discover nearby monitors, probe which are reporting, write the config. |
-| `scheduler.py` | Cross-platform background scheduling: launchd, systemd timers, Task Scheduler. |
+| `scheduler.py` | Cross-platform background scheduling: launchd, systemd timers, Task Scheduler. `install` is idempotent — it builds the bundle, writes the plist and verifies. |
 | `backup.py` | Portable export/restore of config and readings. Keys excluded unless asked. |
 | `analyse.py` | Evening-premium analysis and corroboration-threshold tuning, from the CLI. |
 | `dashboard.html` | Single-file UI. No build step, no external assets — the chart renderer is local canvas. |
-| `poller.py` | **Single control surface.** start/stop/restart, poll, alerts, backfill, logs. |
-| `scheduler.py install` | Idempotent installer. Builds the bundle, writes the plist, verifies. |
+| `settings.html` | The settings UI, served by `poller.py` with a per-process token substituted in. Same constraints as the dashboard. §2.8. |
 | `poller.py --doctor` | Health check. Knows that "no process" is the correct resting state. |
 | `poller.py --open` | Starts the server if needed, opens the browser. |
+| `config.example.json` | Shipped template, no real values. |
 | `~/.airo/config.json` | Location, sources, scale, fusion rule, retention, `data_dir`. **Never the API key.** |
 | `tray/` | The only widget. Tauri/Rust, cross-platform. Reads `~/.airo/data/latest.json` and renders it; `--print-menu` prints the readout without a window server. |
 | `~/.airo/data/` | Readings, `latest.json`, logs. Outside the checkout since v0.6; a `data/` inside it is pre-v0.6 and gitignored. |
+| `~/.airo/<provider>.key` | One key per network, mode `600`, outside the repo by design. |
 | `Airo.app/` | A leftover from the deleted shell installer; nothing rebuilds it. `scheduler.py install` uses one if it is already there and otherwise runs `poller.py` directly. Gitignored — it contains absolute paths. Not the shipped app, which is the Tauri bundle under `tray/target/`. §2.2. |
 | `tools/check.py` | The gates. What CI runs; run it before every push. §7a. |
 | `tools/faultcheck.py` | Breaks the product on purpose and reports which tests notice. §7a. |
 | `tools/faults/*.json` | The committed faults, run by CI on every push. |
 | `tools/stage_bundle.py` | Stages the payload the tray bundles. |
-| `tests/*guard.py` | Block an effect — network, `~/.airo`, browser, notifications. Not stubs. §7a. |
+| `tools/fetch_runtime.py` | Downloads the Python interpreter the installer ships inside the app. §4a. |
+| `tools/install-hooks.sh` | Installs the pre-commit user-data guard. Per clone; nothing installs it for you. |
+| `tests/` | `unittest`, no dependencies. Run before every commit. |
+| `tests/*guard.py` | Block an effect — network, `~/.airo`, browser, notifications, the session manager. Not stubs. §7a. |
 | `tests/test_contracts.py` | Claims about the codebase rather than about a function. §7a. |
 | `tests/test_end_to_end.py` | Journeys through the real CLI. §7a. |
 | `tests/test_page_render.py` | The pages' own JavaScript, executed against a payload. §7a. |
@@ -1021,7 +1015,7 @@ the JSON payload.
 | `notify()` | Per-platform notification — `osascript`, PowerShell toast, `notify-send`. Best-effort, never raises |
 | `get_api_key()` | Resolution order, never echoes the value |
 | `http_get()` / `http_post_json()` | The two request helpers. `X-API-Key` only when there is a key — urllib rejects a `None` header and that broke every keyless provider |
-| `serve_forever()` | `127.0.0.1` static server with `no-store`, plus the JSON API — read-only over `GET`, and the settings `POST` routes behind the four-check chain in §5's threat table (loopback `Host` → `Origin` → JSON content type → per-process token) |
+| `serve_forever()` | `127.0.0.1` static server with `no-store`, plus the JSON API — read-only over `GET`, and the settings `POST` routes behind the four-check chain in SECURITY.md's threat model (loopback `Host` → `Origin` → JSON content type → per-process token) |
 | `current()` / `history()` / `discover()` | The `Provider` contract each network implements. Adding a network is meant to be one class and nothing else (§1) |
 
 ---
@@ -1218,8 +1212,9 @@ Read this list before writing a test here.
 
 ## 8. Legal constraints that shape the code
 
-PurpleAir's terms impose requirements the code must satisfy. See
-[LICENSING.md](LICENSING.md) for the obligations. The full legal analysis is not published.
+The obligations themselves — what each provider's terms require, forbid and grant — are in
+[LICENSING.md](LICENSING.md), and only there. This section is the other half: where each
+requirement is met in the code. The full legal analysis is not published.
 
 | Requirement | Where it's implemented |
 |---|---|
@@ -1230,6 +1225,5 @@ PurpleAir's terms impose requirements the code must satisfy. See
 | Fair-use rate limits | Default 15-minute interval; config documents that below 10 minutes wastes points |
 
 **Do not remove the attribution or disclaimer when forking** — substitute your own product
-name. Two clauses matter if you build commercially: **§4.5** restricts MIT-licensed materials
-in creating data derivatives, and **§4.4** grants PurpleAir a perpetual sublicensable licence
-over derived models. Neither affects personal use.
+name. The clauses that matter if you build on this commercially are in
+[LICENSING.md](LICENSING.md) under "Specific cautions"; none of them affects personal use.
