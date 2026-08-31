@@ -7,7 +7,7 @@ body:
       value: >-
         The first-run warning on macOS is expected and the README says what to do
         about it: [right-click → Open, not
-        double-click](https://github.com/Donnishcomau/airo/blob/main/README.md#4-open-it--right-click-the-first-time-not-double-click).
+        double-click](https://github.com/Donnishcomau/airo/blob/main/README.md#download-and-install).
         If that is the message you are seeing, try it before filing — it costs you
         a minute and it is the answer most of the time.
 
