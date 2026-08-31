@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write        # needed to attach artefacts to the release
+  contents: read         # the default; write is granted per job, below
 
 jobs:
   # One job per platform, deliberately not a matrix. They differ in more than a
@@ -36,20 +36,27 @@ jobs:
     # of what users download, so it is pinned.
     runs-on: macos-14
 
-    steps:
-      - uses: actions/checkout@v7
+    permissions:
+      contents: write      # needed to attach artefacts to the release
 
-      - uses: actions/setup-python@v7
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
       - name: The suite must pass before anything is published
         run: python3 -m unittest discover -s tests
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned to a commit, so the toolchain the branch name used to supply
+      # has to be named here.
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
 
       - name: Cache the Tauri CLI
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/bin/cargo-tauri
           key: tauri-cli-v2-${{ runner.os }}
@@ -82,7 +89,7 @@ jobs:
           cat *.sha256
 
       - name: Keep the build even when there is no release to attach to
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: airo-macos-arm64
           path: |
@@ -91,7 +98,7 @@ jobs:
 
       - name: Attach to the release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           files: |
             tray/target/release/bundle/dmg/*.dmg
@@ -102,20 +109,27 @@ jobs:
     name: Windows (x86_64, untested)
     runs-on: windows-latest
 
-    steps:
-      - uses: actions/checkout@v7
+    permissions:
+      contents: write      # needed to attach artefacts to the release
 
-      - uses: actions/setup-python@v7
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
       - name: The suite must pass before anything is published
         run: python -m unittest discover -s tests
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned to a commit, so the toolchain the branch name used to supply
+      # has to be named here.
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
 
       - name: Cache the Tauri CLI
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/bin/cargo-tauri.exe
           key: tauri-cli-v2-${{ runner.os }}
@@ -145,7 +159,7 @@ jobs:
           cat *.sha256
 
       - name: Keep the build even when there is no release to attach to
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: airo-windows-x86_64
           path: |
@@ -154,7 +168,7 @@ jobs:
 
       - name: Attach to the release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           files: |
             tray/target/release/bundle/msi/*.msi
@@ -165,17 +179,24 @@ jobs:
     name: Linux (x86_64, untested)
     runs-on: ubuntu-22.04
 
-    steps:
-      - uses: actions/checkout@v7
+    permissions:
+      contents: write      # needed to attach artefacts to the release
 
-      - uses: actions/setup-python@v7
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
       - name: The suite must pass before anything is published
         run: python3 -m unittest discover -s tests
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned to a commit, so the toolchain the branch name used to supply
+      # has to be named here.
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
 
       - name: Install the system libraries Tauri links against
         # webkit2gtk and libappindicator are not on the runner by default, and
@@ -188,7 +209,7 @@ jobs:
             patchelf libgtk-3-dev libfuse2
 
       - name: Cache the Tauri CLI
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/bin/cargo-tauri
           key: tauri-cli-v2-${{ runner.os }}
@@ -221,7 +242,7 @@ jobs:
           cat deb/*.sha256 appimage/*.sha256 2>/dev/null || true
 
       - name: Keep the build even when there is no release to attach to
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: airo-linux-x86_64
           path: |
@@ -232,7 +253,7 @@ jobs:
 
       - name: Attach to the release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           files: |
             tray/target/release/bundle/deb/*.deb
@@ -248,9 +269,13 @@ jobs:
     needs: [macos, windows, linux]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-22.04
+
+    permissions:
+      contents: write      # needed to write the release body
+
     steps:
       - name: Say what each download is, and what it is not
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           # The unsigned warning is the minimum a user is owed: without it the
           # Gatekeeper block reads as malware and they stop. The untested
@@ -279,4 +304,8 @@ jobs:
             ### Verifying a download
             Every file has a `.sha256` beside it:
             `shasum -a 256 -c Airo_*.dmg.sha256` (macOS/Linux)
+
+            A match confirms the file reached you intact, not that the build is
+            trustworthy — the checksums are produced by the same workflow run
+            that produced the files.
           draft: false
