@@ -1,7 +1,7 @@
 # Risks
 
 **The register itself is in [ROADMAP.md § Risk register](ROADMAP.md#risk-register)**
-— 90 rows, each naming the test that enforces it.
+— every row naming the test that enforces it.
 
 One register, not two. A second copy would drift from the first, and the reader
 would have no way to tell which had. This page is the entry point and the
@@ -54,6 +54,7 @@ becomes decoration. If you cannot name the test, the row is not ready.
 
 ## Security
 
-Vulnerability reporting is in [SECURITY.md](SECURITY.md). The threat model is
-in [ARCHITECTURE.md §5](ARCHITECTURE.md). Neither belongs in the register: the
-register is about being *wrong*, not about being *attacked*.
+Vulnerability reporting and the threat model are both in
+[SECURITY.md](SECURITY.md) — one canonical copy, held against the code by a
+test that fails if a host the source can reach goes unnamed. Neither belongs in
+the register: the register is about being *wrong*, not about being *attacked*.

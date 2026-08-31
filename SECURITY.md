@@ -84,9 +84,9 @@ providers' own infrastructure; the accuracy of sensor data.
 |---|---|
 | **Storage** | `~/.airo/<provider>.key`, mode `600`, directory `700` |
 | **Deliberately outside the repo** | So it can't be committed, synced or copied with the project |
-| **Never in the config** | Keys are not read from config at all as of v0.5 |
+| **Never in the config** | Keys are not read from config at all as of v0.5 — except a **private** PurpleAir sensor's `read_key`, which belongs to one source rather than to a network and so lives inside `config.json`, which is why the settings API reports keys as presence only |
 | **Config outside the repo** | Settings live in `~/.airo/config.json` (mode 600), not in the working tree — a config holds a location and chosen sensors, which is personal data. CI fails if `config.json` is ever tracked |
-| **Transmission** | `X-API-Key` header over HTTPS — never a query string, which would land in logs. Omitted entirely for keyless providers |
+| **Transmission** | `X-API-Key` header over HTTPS — never a query string, which would land in logs. The `read_key` above is the exception, because PurpleAir accepts it only as a query parameter: it lands in their access log, as the host table says. Omitted entirely for keyless providers |
 | **Logging** | Never logged, printed or included in error output. `--status` and `poller.py --doctor` report only *whether* a key was found, and the file's permissions |
 | **Backstop** | `.gitignore` excludes `apikey`, `*.key`, `.env`, `secrets.json`; CI fails the build if any is tracked or if a UUID-shaped key appears in source |
 

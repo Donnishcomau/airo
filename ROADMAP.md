@@ -105,7 +105,7 @@ Everything else from this table is fixed and recorded in
 
 | | Issue | Status |
 |---|---|---|
-| I | Two CI checks run without being required | `Coverage floor` and CodeQL's `Analyze (python)` are not in branch protection. The `timezones` job was in exactly that state, and a DST bug survived two releases while every runner was UTC |
+| I | A CI check runs without being required | CodeQL's `Analyze (python)` is not in branch protection, so it can go red without blocking a merge. `Coverage floor` was in the same state and is required now; before that the `timezones` job was, and a DST bug survived two releases while every runner was UTC |
 | J | One open Dependabot alert: `glib` 0.18.5 | `wont-fix`, dismissed on GitHub as `tolerable_risk` with the chain recorded in the dismissal rather than left unexplained. Unsoundness in `VariantStrIter`'s `Iterator`/`DoubleEndedIterator` impls, medium, patched in 0.20.0 and not upgradable: `airo-tray → tauri → gtk 0.18.2 → glib`, and gtk requires `^0.18`, so `--precise 0.20.0` fails. gtk is Linux-only in Tauri, and this project's Rust calls neither `glib` nor any `Variant` API — the tray renders `latest.json` and decides nothing. Revisit when Tauri moves to gtk 0.19+ |
 
 ---

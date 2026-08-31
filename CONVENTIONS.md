@@ -266,8 +266,11 @@ pathlib.Path('/tmp/d.js').write_text(js)" && node --check /tmp/d.js
   `test_contracts.py::TestDocsMatchTheCode`.
 - The tray builds and runs; installed via `python3 scheduler.py install-tray`. CI compiles and
   tests it on all three platforms and rejects numeric air-quality comparisons in Rust.
-- Roadmap priorities: CLA before accepting external PRs (#3a), screenshots (#3b), then the
-  weather forecast (#9). A hosted service is explicitly not planned — see ROADMAP "Explicitly not doing".
+- Roadmap priorities: the two open items anyone can pick up are what is still wanted from
+  data quality (#6) and the macOS notification attributed to "Script Editor" (#10). More
+  national networks (#3c) and signing the installers (#3f) are blocked on the maintainer —
+  they need keys, accounts or a certificate nobody else can supply. A hosted service is
+  explicitly not planned — see ROADMAP "Explicitly not doing".
 - [RESEARCH.md](RESEARCH.md) holds the evidence base with citations — check it before making
   any empirical claim about air quality behaviour.
 - **Licensing is AGPL-3.0 + commercial.** [LICENSING.md](LICENSING.md) covers the data terms,

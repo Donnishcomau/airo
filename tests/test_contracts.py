@@ -3562,8 +3562,13 @@ class TestDocsMatchTheCode(unittest.TestCase):
     are a historical record and were correct when written.
     """
 
+    #: Every document a reader is expected to act on. RISKS, DECISIONS and CLA
+    #: were outside the list for no reason anyone recorded, which meant three
+    #: documents telling contributors what to do were the only ones the drift
+    #: machinery never read. A doc exempt from the check is a doc that rots.
     LIVING = ("README.md", "ARCHITECTURE.md", "CONVENTIONS.md", "CONTRIBUTING.md",
-              "SECURITY.md", "LICENSING.md", "ROADMAP.md", "RELEASING.md")
+              "SECURITY.md", "LICENSING.md", "ROADMAP.md", "RELEASING.md",
+              "RISKS.md", "DECISIONS.md", "CLA.md")
 
     def living_docs(self):
         return [(n, (ROOT / n).read_text(encoding="utf-8"))
