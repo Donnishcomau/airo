@@ -12,7 +12,7 @@ Two audiences, and the split is the whole point:
 | Where | For | Holds |
 |---|---|---|
 | the repository | anyone on the internet | `ARCHITECTURE.md`, `DECISIONS.md`, `RISKS.md`, `ROADMAP.md` |
-| `private/` (gitignored) | the maintainer alone | `TODO.md`, session logs, install snapshots, anything naming a real sensor or place |
+| `private/` (gitignored, and only in a maintainer checkout) | the maintainer alone | `TODO.md`, session logs, install snapshots, anything naming a real sensor or place |
 
 A contributor needs the architecture, the decisions and the risks. Nobody
 outside needs the maintainer's todo list, and nobody at all should be able to
@@ -31,7 +31,8 @@ it.
   broken tree
 - `git log --oneline -30` — what has actually landed since the last pass
 - the risk register in `ROADMAP.md` — which rows have been closed
-- `private/session-logs/` — what went wrong, which is the part worth keeping
+- `private/session-logs/` — what went wrong, which is the part worth keeping. Only if
+  `private/` exists; a public clone has none, and that is not a missing step
 
 ## The four documents
 
@@ -74,6 +75,9 @@ New rows come from what actually happened, not from imagination. The best
 rows in the register are all incidents.
 
 ### `private/knowledge/TODO.md` — the maintainer's own list
+
+Only if `private/` exists (a maintainer checkout). Skip this document entirely
+in a public clone rather than creating it.
 
 Grouped by who is blocked:
 

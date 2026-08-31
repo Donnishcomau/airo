@@ -19,8 +19,8 @@
 
 - [ ] **No new runtime dependencies** (standard library only)
 - [ ] No API key can reach a log, a print, or the repo
-- [ ] Date handling uses local parts, not `toISOString()` (ARCHITECTURE §3.2)
-- [ ] Band colour matches the *displayed* rounded value (ARCHITECTURE §3.4)
+- [ ] Date handling uses local parts, not `toISOString()` ([ARCHITECTURE §3.2](https://github.com/Donnishcomau/airo/blob/main/ARCHITECTURE.md#32-toisostring-will-silently-corrupt-day-bucketing))
+- [ ] Band colour matches the *displayed* rounded value ([ARCHITECTURE §3.4](https://github.com/Donnishcomau/airo/blob/main/ARCHITECTURE.md#34-rounding-vs-classification))
 - [ ] Render steps stay in isolated `try/catch` blocks
 - [ ] Docs updated — ARCHITECTURE.md for design changes, ROADMAP.md if an item closes
 - [ ] CHANGELOG.md updated under Unreleased

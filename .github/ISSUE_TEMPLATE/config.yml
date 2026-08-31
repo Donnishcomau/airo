@@ -1,7 +1,7 @@
-# Blank issues are off because the templates ask for the things that decide
-# whether a report can be acted on — `--doctor` output, the platform, the log
-# lines — and a blank box gets none of them. A report nobody can reproduce
-# costs the reporter more than it costs us: they wrote it and nothing happened.
+# Blank issues are off because the forms ask for the things that decide whether
+# a report can be acted on — the version, the platform, what the health check
+# said — and a blank box gets none of them. A report nobody can reproduce costs
+# the reporter more than it costs us: they wrote it and nothing happened.
 blank_issues_enabled: false
 
 contact_links:
