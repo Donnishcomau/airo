@@ -4,13 +4,19 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:   # full matrix, including Windows, on demand
 
 permissions:
   contents: read          # every job here only reads; nothing is published
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   sign-off:
     name: Contributor sign-off
+    timeout-minutes: 10
     # Dual licensing only works if every contribution can also be offered
     # commercially, and that consent has to be collected BEFORE code is merged.
     # Retrofitting it means finding every contributor -- including ones who have
@@ -95,13 +101,15 @@ jobs:
 
   test:
     name: Tests (${{ matrix.os }}, Python ${{ matrix.python }})
+    timeout-minutes: 45
     # The poller is cross-platform now, so it has to be tested that way.
     # Scheduling differs per OS; the data layer must not.
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # No macOS on hosted runners (Mac testing is local on the Mac mini); Windows only on a manual dispatch.
+        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["ubuntu-latest","windows-latest"]' || '["ubuntu-latest"]') }}
         python: ['3.9', '3.12']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -173,6 +181,7 @@ jobs:
 
   timezones:
     name: Tests (awkward timezones)
+    timeout-minutes: 30
     # Every runner above is UTC, and the developer is in Queensland, which has
     # no daylight saving. Between them those two facts hid a report that named
     # the wrong hour for half the year everywhere that puts its clocks
@@ -210,6 +219,7 @@ jobs:
 
   lint:
     name: Syntax and policy
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -372,6 +382,7 @@ jobs:
 
   faults:
     name: Committed faults still fail
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -400,6 +411,7 @@ jobs:
 
   coverage:
     name: Coverage floor
+    timeout-minutes: 30
     # One platform, one version. What the tests *reach* does not vary by OS —
     # the platform-specific work is already covered by the six Tests jobs, and
     # running coverage on all of them would double CI time for the same answer.
@@ -429,11 +441,13 @@ jobs:
 
   tray:
     name: Tray builds (${{ matrix.os }})
+    timeout-minutes: 60
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # No macOS on hosted runners (Mac testing is local on the Mac mini); Windows only on a manual dispatch.
+        os: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["ubuntu-latest","windows-latest"]' || '["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Pinned to a commit, so the toolchain the branch name used to supply
